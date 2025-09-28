@@ -38,9 +38,11 @@ class AmbianceGUI(tk.Tk):
         # get screen width and height
         ws = self.winfo_screenwidth() # width of the screen
         hs = self.winfo_screenheight() # height of the screen
-        x = (ws/2) - (720/2) # X-axis offset of window
-        y = (hs/2) - (850/2) #Y-axis offset of window
-        self.geometry('%dx%d+%d+%d' % (720, 850, x, y))# Adjusted window size
+        window_w= int(ws*.45)
+        window_h= hs*.907
+        x = (ws/2) - (window_w/2) # X-axis offset of window
+        y = (hs/2) - (window_h/2) #Y-axis offset of window
+        self.geometry('%dx%d+%d+%d' % (window_w, window_h, x, 0))# Adjusted window size
 
 
         # Set up the main window
@@ -48,7 +50,7 @@ class AmbianceGUI(tk.Tk):
 
         # Create main frame
         self.frame = ttk.Frame(self)
-        self.frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.frame.pack(fill="both", expand=True, padx=10, pady=7)
 
         # Add connection status frame at the top
         self._setup_connection_status()
@@ -106,7 +108,7 @@ class AmbianceGUI(tk.Tk):
 
         # Create inner frame for the two connection sections
         connection_sections = ttk.Frame(connection_frame)
-        connection_sections.pack(fill="x", pady=10, padx=10)
+        connection_sections.pack(fill="x", pady=7, padx=10)
 
         # Set up Bluetooth controls
         self._setup_bluetooth_controls(connection_sections)
@@ -136,7 +138,7 @@ class AmbianceGUI(tk.Tk):
             text="Scan for Devices",
             command=self.start_scan_devices
         )
-        self.scan_button.pack(pady=10, padx=10)
+        self.scan_button.pack(pady=7, padx=10)
 
         # Device list label
         self.devices_label = ttk.Label(bluetooth_frame, text="Discovered Devices:")
@@ -223,7 +225,7 @@ class AmbianceGUI(tk.Tk):
     def _setup_connection_buttons(self, parent_frame):
         """Set up the connection and refresh buttons."""
         button_frame = ttk.Frame(parent_frame)
-        button_frame.pack(pady=10)
+        button_frame.pack(pady=7)
 
         # Connect button
         self.uart_connect_button = ttk.Button(
@@ -257,7 +259,7 @@ class AmbianceGUI(tk.Tk):
         """Set up the audio control section."""
         # Create frame for audio controls
         control_frame = ttk.LabelFrame(self.frame, text="Controls")
-        control_frame.pack(fill="x", pady=10, padx=10)
+        control_frame.pack(fill="x", pady=7, padx=10)
 
         # Single row - All controls with proper spacing
         controls_row = ttk.Frame(control_frame)
@@ -269,7 +271,7 @@ class AmbianceGUI(tk.Tk):
 
         # Volume input field
         volume_input_frame = ttk.Frame(volume_section)
-        volume_input_frame.pack(pady=10, padx=10)
+        volume_input_frame.pack(pady=7, padx=10)
         
         self.volume_input = ttk.Entry(volume_input_frame, width=8)
         self.volume_input.pack()
@@ -288,7 +290,7 @@ class AmbianceGUI(tk.Tk):
 
         # Duty cycle input field
         duty_input_frame = ttk.Frame(duty_section)
-        duty_input_frame.pack(pady=10, padx=10)
+        duty_input_frame.pack(pady=7, padx=10)
         
         self.duty_cycle_input = ttk.Entry(duty_input_frame, width=8)
         self.duty_cycle_input.pack()
@@ -307,7 +309,7 @@ class AmbianceGUI(tk.Tk):
 
         # Folder and File labels and inputs on one line
         track_input_frame = ttk.Frame(track_section)
-        track_input_frame.pack(pady=10, padx=10)
+        track_input_frame.pack(pady=7, padx=10)
         
         ttk.Label(track_input_frame, text="Folder #:").pack(side=tk.LEFT, padx=(0, 5))
         self.manual_folder_entry = ttk.Entry(track_input_frame, width=6)
@@ -332,11 +334,11 @@ class AmbianceGUI(tk.Tk):
         """Set up the scheduler section for timed playback."""
         # Create frame for scheduler
         scheduler_frame = ttk.LabelFrame(self.frame, text="Scheduler")
-        scheduler_frame.pack(fill="x", pady=10, padx=10)
+        scheduler_frame.pack(fill="x", pady=7, padx=10)
 
         # Create main container for better organization
         main_container = ttk.Frame(scheduler_frame)
-        main_container.pack(pady=10, padx=10)
+        main_container.pack(pady=7, padx=10)
 
         # Top row - Date, Time, and Audio File controls
         controls_row = ttk.Frame(main_container)
@@ -366,7 +368,7 @@ class AmbianceGUI(tk.Tk):
 
         # Month and day controls in a grid
         date_grid = ttk.Frame(date_frame)
-        date_grid.pack(pady=10, padx=10)
+        date_grid.pack(pady=7, padx=10)
 
         # Month selection
         ttk.Label(date_grid, text="Month:").grid(row=0, column=0, padx=(0, 5), pady=5, sticky="e")
@@ -400,7 +402,7 @@ class AmbianceGUI(tk.Tk):
 
         # Time controls in a grid
         time_grid = ttk.Frame(time_frame)
-        time_grid.pack(pady=10, padx=10)
+        time_grid.pack(pady=7, padx=10)
 
         # Start time controls
         ttk.Label(time_grid, text="Start Time:").grid(row=0, column=0, padx=(0, 5), pady=5, sticky="e")
@@ -441,7 +443,7 @@ class AmbianceGUI(tk.Tk):
 
         # File controls in a grid
         file_grid = ttk.Frame(file_frame)
-        file_grid.pack(pady=10, padx=10)
+        file_grid.pack(pady=7, padx=10)
 
         # Folder selection
         ttk.Label(file_grid, text="Folder #:").grid(row=0, column=0, padx=(0, 5), pady=5, sticky="e")
@@ -475,7 +477,7 @@ class AmbianceGUI(tk.Tk):
             command=self.add_schedule_entry,
             style="Accent.TButton"
         )
-        self.add_entry_button.pack(side=tk.LEFT, padx=10, pady=10, expand=True)
+        self.add_entry_button.pack(side=tk.LEFT, padx=10, pady=7, expand=True)
 
         # Schedule management buttons
         self.send_all_button = ttk.Button(
@@ -483,7 +485,7 @@ class AmbianceGUI(tk.Tk):
             text="Send Schedules",
             command=self.send_all_schedules
         )
-        self.send_all_button.pack(side=tk.LEFT, padx=5, pady=10, expand=True)
+        self.send_all_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
 
         # Clear queue button
         self.clear_queue_button = ttk.Button(
@@ -491,7 +493,7 @@ class AmbianceGUI(tk.Tk):
             text="Clear Queue",
             command=self.clear_schedule_queue
         )
-        self.clear_queue_button.pack(side=tk.LEFT, padx=5, pady=10, expand=True)
+        self.clear_queue_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
 
         # Export schedules button
         self.export_schedules_button = ttk.Button(
@@ -499,7 +501,7 @@ class AmbianceGUI(tk.Tk):
             text="Export Schedules",
             command=self.export_schedules
         )
-        self.export_schedules_button.pack(side=tk.LEFT, padx=5, pady=10, expand=True)
+        self.export_schedules_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
 
         # Import schedules button
         self.import_schedules_button = ttk.Button(
@@ -507,13 +509,13 @@ class AmbianceGUI(tk.Tk):
             text="Import Schedules",
             command=self.import_schedules
         )
-        self.import_schedules_button.pack(side=tk.LEFT, padx=5, pady=10, expand=True)
+        self.import_schedules_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
 
     def _setup_log_section(self):
         """Set up the log and output section."""
         # Create frame for log controls
         bottom_button_frame = ttk.Frame(self.frame)
-        bottom_button_frame.pack(fill="x", padx=10, pady=5)
+        bottom_button_frame.pack(fill="both", padx=10, pady=5)
 
         # Download log button
         self.download_log_button = ttk.Button(
