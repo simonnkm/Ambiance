@@ -1,0 +1,4 @@
+../STM32_BLE/App/usart.c:175:30:USART_EventHandler	64	static
+../STM32_BLE/App/usart.c:328:6:USART_Init	24	static
+../STM32_BLE/App/usart.c:376:12:USART_UpdateValue	24	static
+../STM32_BLE/App/usart.c:425:12:USART_NotifyValue	24	static

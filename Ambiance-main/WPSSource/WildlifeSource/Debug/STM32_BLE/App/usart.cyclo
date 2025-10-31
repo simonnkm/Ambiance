@@ -1,0 +1,4 @@
+../STM32_BLE/App/usart.c:175:30:USART_EventHandler	13
+../STM32_BLE/App/usart.c:328:6:USART_Init	1
+../STM32_BLE/App/usart.c:376:12:USART_UpdateValue	5
+../STM32_BLE/App/usart.c:425:12:USART_NotifyValue	1

@@ -1,0 +1,4 @@
+../Core/Src/BLUETOOTH.c:31:6:BLUETOOTH_BufferInit	8	static
+../Core/Src/BLUETOOTH.c:43:9:BLUETOOTH_WriteBuffer	16	static
+../Core/Src/BLUETOOTH.c:62:9:BLUETOOTH_ReadBuffer	16	static
+../Core/Src/BLUETOOTH.c:80:9:BLUETOOTH_BufferEmpty	8	static

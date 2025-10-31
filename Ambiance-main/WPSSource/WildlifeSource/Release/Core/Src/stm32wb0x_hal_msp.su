@@ -1,0 +1,11 @@
+../Drivers/STM32WB0x_HAL_Driver/Inc/stm32wb0x_ll_pwr.h:2723:22:LL_PWR_SetNoPullB	0	static
+../Drivers/STM32WB0x_HAL_Driver/Inc/stm32wb0x_ll_bus.h:229:22:LL_AHB1_GRP1_EnableClock	8	static
+../Core/Src/stm32wb0x_hal_msp.c:63:6:HAL_MspInit	8	static
+../Core/Src/stm32wb0x_hal_msp.c:85:6:HAL_I2C_MspInit	48	static
+../Core/Src/stm32wb0x_hal_msp.c:134:6:HAL_I2C_MspDeInit	8	static
+../Core/Src/stm32wb0x_hal_msp.c:165:6:HAL_UART_MspInit	64	static
+../Core/Src/stm32wb0x_hal_msp.c:225:6:HAL_UART_MspDeInit	8	static
+../Core/Src/stm32wb0x_hal_msp.c:256:6:HAL_RADIO_MspInit	64	static
+../Core/Src/stm32wb0x_hal_msp.c:319:6:HAL_RADIO_MspDeInit	8	static
+../Core/Src/stm32wb0x_hal_msp.c:353:6:HAL_TIM_Base_MspInit	16	static
+../Core/Src/stm32wb0x_hal_msp.c:379:6:HAL_TIM_Base_MspDeInit	8	static

@@ -1,0 +1,5 @@
+../Core/Src/FIFO.c:26:6:FIFO_Create	16	static
+../Core/Src/FIFO.c:37:9:FIFO_Destroy	24	static
+../Core/Src/FIFO.c:51:9:FIFO_Enqueue	24	static
+../Core/Src/FIFO.c:71:9:FIFO_Dequeue	48	static
+../Core/Src/FIFO.c:91:6:FIFO_GetSize	16	static

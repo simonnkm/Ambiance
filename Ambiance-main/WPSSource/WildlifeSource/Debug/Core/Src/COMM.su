@@ -1,0 +1,4 @@
+../Core/Src/COMM.c:74:9:COMM_Event_Init	24	static
+../Core/Src/COMM.c:83:6:COMM_Event_Post	16	static
+../Core/Src/COMM.c:93:9:COMM_Event_Updater	48	static
+../Core/Src/COMM.c:117:9:COMM_Event_Handler	72	static

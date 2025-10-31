@@ -1,0 +1,2 @@
+../Core/Src/I2C-UART_manager.c:26:6:I2CUARTtoI2C	32	static
+../Core/Src/I2C-UART_manager.c:57:6:I2CUARTtoUSART	32	static

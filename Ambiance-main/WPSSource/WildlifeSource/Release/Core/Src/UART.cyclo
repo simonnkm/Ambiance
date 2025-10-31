@@ -1,0 +1,8 @@
+../Core/Src/UART.c:42:6:LPUART1_IRQHandler	1
+../Core/Src/UART.c:53:6:USART1_IRQHandler	8
+../Core/Src/UART.c:94:5:UART_Init	5
+../Core/Src/UART.c:164:6:LPUART_ReadRx	2
+../Core/Src/UART.c:179:6:LPUART_WriteTx	2
+../Core/Src/UART.c:193:6:USART_ReadRx	3
+../Core/Src/UART.c:210:6:USART_WriteTx	4
+../Core/Src/UART.c:231:9:USART_TxEmpty	2

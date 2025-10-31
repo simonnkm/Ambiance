@@ -1,0 +1,3 @@
+../Core/Src/system_stm32wb0x.c:316:6:SystemCoreClockUpdate	2
+../Core/Src/system_stm32wb0x.c:348:13:CPUcontextRestore	1
+../Core/Src/system_stm32wb0x.c:193:6:SystemInit	7

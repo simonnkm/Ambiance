@@ -1,0 +1,5 @@
+../Core/Src/BOARD.c:18:5:SystemClock_Config	2
+../Core/Src/BOARD.c:50:5:PeriphCommonClock_Config	1
+../Core/Src/BOARD.c:74:5:BOARD_Init	2
+../Core/Src/BOARD.c:93:6:BOARD_CrashHandler	1
+../Core/Src/BOARD.c:107:6:Error_Handler	1

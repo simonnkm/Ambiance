@@ -1,0 +1,11 @@
+../Core/Src/I2C.c:51:19:I2C_Post	2
+../Core/Src/I2C.c:70:19:I2C_Enqueue	7
+../Core/Src/I2C.c:103:6:HAL_I2C_MemTxCpltCallback	2
+../Core/Src/I2C.c:122:6:HAL_I2C_MemRxCpltCallback	2
+../Core/Src/I2C.c:144:6:HAL_I2C_ErrorCallback	4
+../Core/Src/I2C.c:161:6:I2C1_IRQHandler	2
+../Core/Src/I2C.c:181:5:I2C_Init	5
+../Core/Src/I2C.c:231:19:I2C_Transmit	2
+../Core/Src/I2C.c:243:6:I2C_Flushbuffer	3
+../Core/Src/I2C.c:257:19:I2C_Recieve	4
+../Core/Src/I2C.c:285:15:I2C_WriteReg	2

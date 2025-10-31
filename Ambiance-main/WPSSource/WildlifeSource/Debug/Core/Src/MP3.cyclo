@@ -1,0 +1,7 @@
+../Core/Src/MP3.c:82:6:MP3_SendData	2
+../Core/Src/MP3.c:102:9:parsePacket	21
+../Core/Src/MP3.c:196:9:MP3_Event_Init	1
+../Core/Src/MP3.c:220:6:MP3_Event_Post	1
+../Core/Src/MP3.c:231:9:MP3_Event_Updater	12
+../Core/Src/MP3.c:282:9:MP3_Event_Handler	23
+../Core/Src/MP3.c:469:10:MP3_GetCurrentFile	1

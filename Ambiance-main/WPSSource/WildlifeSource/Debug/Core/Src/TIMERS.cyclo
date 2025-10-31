@@ -1,0 +1,4 @@
+../Core/Src/TIMERS.c:28:10:TIMERS_Init	4
+../Core/Src/TIMERS.c:57:10:TIMERS_GetMilliSeconds	2
+../Core/Src/TIMERS.c:68:10:TIMERS_GetMircoSeconds	2
+../Core/Src/TIMERS.c:79:6:TIM2_IRQHandler	1

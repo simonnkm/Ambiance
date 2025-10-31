@@ -1,0 +1,5 @@
+../Core/Src/GPIO.c:41:5:GPIO_Init	1
+../Core/Src/GPIO.c:85:9:GPIO_ReadButtons	1
+../Core/Src/GPIO.c:97:9:GPIO_Event_Init	1
+../Core/Src/GPIO.c:120:9:GPIO_Event_Updater	2
+../Core/Src/GPIO.c:140:9:GPIO_Event_Handler	5
