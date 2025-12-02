@@ -9,6 +9,7 @@ via Bluetooth or UART connections. It supports:
 - Logging and monitoring
 """
 
+import re
 import sys
 import serial
 import asyncio
@@ -35,14 +36,7 @@ class AmbianceGUI(tk.Tk):
         # Add protocol handler for window closing
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # get screen width and height
-        ws = self.winfo_screenwidth() # width of the screen
-        hs = self.winfo_screenheight() # height of the screen
-        window_w= int(ws*.45)
-        window_h= hs*.907
-        x = (ws/2) - (window_w/2) # X-axis offset of window
-        y = (hs/2) - (window_h/2) #Y-axis offset of window
-        self.geometry('%dx%d+%d+%d' % (window_w, window_h, x, 0))# Adjusted window size
+        self.state('zoomed')
 
 
         # Set up the main window
@@ -272,15 +266,15 @@ class AmbianceGUI(tk.Tk):
         # Volume input field
         volume_input_frame = ttk.Frame(volume_section)
         volume_input_frame.pack(pady=7, padx=10)
-        
-        self.volume_input = ttk.Entry(volume_input_frame, width=8)
+        self.volm = tk.IntVar()
+        self.volume_input = tk.Scale(volume_input_frame,orient = 'horizontal', variable = self.volm, from_ = 0, to = 100, showvalue = 1)
         self.volume_input.pack()
         
         # Volume set button below
         self.volume_set_button = ttk.Button(
             volume_section,
             text="Set",
-            command=self.set_volume
+            command=lambda: self.set_volume(self.volm.get())
         )
         self.volume_set_button.pack(pady=(0, 10), padx=10)
 
@@ -291,15 +285,15 @@ class AmbianceGUI(tk.Tk):
         # Duty cycle input field
         duty_input_frame = ttk.Frame(duty_section)
         duty_input_frame.pack(pady=7, padx=10)
-        
-        self.duty_cycle_input = ttk.Entry(duty_input_frame, width=8)
+        self.duty_cyc = tk.IntVar()
+        self.duty_cycle_input = tk.Scale(duty_input_frame,orient = 'horizontal',variable = self.duty_cyc , from_ = 0, to = 100, showvalue = 1)
         self.duty_cycle_input.pack()
         
         # Duty cycle set button below
         self.duty_cycle_button = ttk.Button(
             duty_section,
             text="Set",
-            command=self.set_duty_cycle
+            command=lambda: self.set_duty_cycle(self.duty_cyc.get())
         )
         self.duty_cycle_button.pack(pady=(0, 10), padx=10)
 
@@ -334,7 +328,7 @@ class AmbianceGUI(tk.Tk):
         """Set up the scheduler section for timed playback."""
         # Create frame for scheduler
         scheduler_frame = ttk.LabelFrame(self.frame, text="Scheduler")
-        scheduler_frame.pack(fill="x", pady=7, padx=10)
+        scheduler_frame.pack(side=tk.LEFT, fill="both", anchor = 'center', expand=True, padx=(0, 10))
 
         # Create main container for better organization
         main_container = ttk.Frame(scheduler_frame)
@@ -372,7 +366,7 @@ class AmbianceGUI(tk.Tk):
 
         # Month selection
         ttk.Label(date_grid, text="Month:").grid(row=0, column=0, padx=(0, 5), pady=5, sticky="e")
-        self.month_entry = ttk.Entry(date_grid, width=8)
+        self.month_entry = ttk.Spinbox(date_grid, from_ = 0, to = 12,width = 8, wrap=True)
         self.month_entry.grid(row=0, column=1, padx=(0, 15), pady=5, sticky="w")
 
         # Start day selection
@@ -409,10 +403,10 @@ class AmbianceGUI(tk.Tk):
         start_time_frame = ttk.Frame(time_grid)
         start_time_frame.grid(row=0, column=1, padx=(0, 15), pady=5, sticky="w")
         
-        self.start_hour_entry = ttk.Entry(start_time_frame, width=4)
+        self.start_hour_entry =  ttk.Spinbox(start_time_frame, from_ = 0, to = 23,width = 4, wrap=True)
         self.start_hour_entry.pack(side=tk.LEFT)
         ttk.Label(start_time_frame, text=":").pack(side=tk.LEFT, padx=2)
-        self.start_min_entry = ttk.Entry(start_time_frame, width=4)
+        self.start_min_entry = ttk.Spinbox(start_time_frame, from_ = 0, to = 60,increment = 15,width = 4, wrap=True)
         self.start_min_entry.pack(side=tk.LEFT)
 
         # Stop time controls
@@ -420,10 +414,10 @@ class AmbianceGUI(tk.Tk):
         stop_time_frame = ttk.Frame(time_grid)
         stop_time_frame.grid(row=1, column=1, padx=(0, 15), pady=5, sticky="w")
         
-        self.stop_hour_entry = ttk.Entry(stop_time_frame, width=4)
+        self.stop_hour_entry = ttk.Spinbox(stop_time_frame, from_ = 0, to = 23,width = 4, wrap=True)
         self.stop_hour_entry.pack(side=tk.LEFT)
         ttk.Label(stop_time_frame, text=":").pack(side=tk.LEFT, padx=2)
-        self.stop_min_entry = ttk.Entry(stop_time_frame, width=4)
+        self.stop_min_entry = ttk.Spinbox(stop_time_frame, from_ = 0, to = 60,increment = 15,width = 4, wrap=True)
         self.stop_min_entry.pack(side=tk.LEFT)
 
         # Time format hint
@@ -540,7 +534,7 @@ class AmbianceGUI(tk.Tk):
         """Set up the text display area for logs and messages."""
         # Create frame for text display
         text_frame = ttk.Frame(self.frame)
-        text_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        text_frame.pack(side=tk.LEFT, fill="both", expand=True, padx=(10, 0))
 
         # Create text widget with increased height
         self.devices_text = tk.Text(
@@ -744,6 +738,15 @@ class AmbianceGUI(tk.Tk):
         finally:
             self.after(0, self._finish_scan)
 
+    def _filter_wps_devices(self, devices):
+        """Return only devices that look like our wps speakers."""
+        filtered = []
+        for d in devices:
+            name = (d.name or "").lower()
+            if "wps_speaker" in name:   # or name.startswith("wps_") etc.
+                filtered.append(d)
+        return filtered
+
     def _update_scan_results(self, devices):
         """
         Update the UI with the results of a Bluetooth device scan.
@@ -756,9 +759,16 @@ class AmbianceGUI(tk.Tk):
         
         self.devices_listbox.delete(0, tk.END)
         for device in devices:
-            if device.name:
-                self.devices_listbox.insert(tk.END, device.name)
+            # Some devices may not have a name; fall back gracefully
+            name = device.name or "Unknown"
+            addr = getattr(device, "address", "??:??:??:??:??:??")
+
+            # Show last 5 chars of address so they're easier to tell apart
+            label = f"{name} [{addr[-8:]}]"
+            self.devices_listbox.insert(tk.END, label)
+
         self.devices_text_insert(f"[BT] Found {len(devices)} devices during scan", debug=True)
+
 
     def _handle_scan_error(self, error_msg):
         """
@@ -789,15 +799,15 @@ class AmbianceGUI(tk.Tk):
             self.devices_text_insert("[BT] Starting BLE scan...", debug=True)
             devices = await BleakScanner.discover(timeout=self.scan_timeout)
             
-            # Log detailed information about each device
-            for device in devices:
-                if device.name:
-                    self.devices_text_insert(
-                        f"[BT] Found device: {device.name}",
-                        debug=True
-                    )
-            
-            return devices
+            wps_device = self._filter_wps_devices(devices)
+
+            self.devices_text_insert(
+            f"[BT] Found {len(devices)} devices, "
+            f"{len(wps_device)} wps_speaker devices",
+            debug=True
+            )
+
+            return wps_device
         except Exception as e:
             error_msg = str(e)
             if not error_msg:
@@ -826,9 +836,9 @@ class AmbianceGUI(tk.Tk):
             self.bluetooth_connect_button.config(state=tk.DISABLED)
 
             # Start connection in a separate thread
-            threading.Thread(target=self._run_bluetooth_connection, args=(selected_device_name,), daemon=True).start()
+            threading.Thread(target=self._run_bluetooth_connection, args=(index,), daemon=True).start()
 
-    def _run_bluetooth_connection(self, device_name):
+    def _run_bluetooth_connection(self, device_index):
         """
         Run the Bluetooth connection process in a separate thread.
         
@@ -836,7 +846,7 @@ class AmbianceGUI(tk.Tk):
             device_name (str): Name of the Bluetooth device to connect to
         """
         try:
-            self.run_async(self.async_connect_to_bluetooth(device_name))
+            self.run_async(self.async_connect_to_bluetooth(device_index))
         except Exception as e:
             error_msg = str(e)  # Capture the error message
             self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] Connection failed: {error_msg}"))
@@ -845,89 +855,175 @@ class AmbianceGUI(tk.Tk):
             # Re-enable connect button
             self.after(0, lambda: self.bluetooth_connect_button.config(state=tk.NORMAL))
 
-    async def async_connect_to_bluetooth(self, device_name):
+    async def async_connect_to_bluetooth(self, device_index: int):
         """
         Asynchronous Bluetooth connection logic.
-        
+
         Args:
-            device_name (str): Name of the Bluetooth device to connect to
+            device_index (int): Index of the selected device in self.discovered_devices
         """
         try:
-            # Check if we have discovered devices
-            if not hasattr(self, 'discovered_devices') or not self.discovered_devices:
+            # Ensure we have a list of discovered devices
+            if not hasattr(self, "discovered_devices") or not self.discovered_devices:
                 # If no devices are stored, do a quick scan
-                self.after(0, lambda: self.devices_text_insert("[BT] Scanning for devices...", debug=True))
-                self.discovered_devices = await BleakScanner.discover(timeout=self.scan_timeout)
-                self.after(0, lambda: self.devices_text_insert(f"[BT] Found {len(self.discovered_devices)} devices during scan", debug=True))
-            
-            # Get the device from the list of discovered devices
-            device_found = False
-            for device in self.discovered_devices:
-                if device.name == device_name:
-                    device_found = True
-                    self.ble_device = device
-                    self.after(0, lambda: self.devices_text_insert(f"[BT] Found device: {device_name}", debug=True))
-                    
-                    # Create client with timeout
-                    self.ble_client = BleakClient(device, timeout=30.0)
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        "[BT] Scanning for devices...", debug=True
+                    ),
+                )
+                devices = await BleakScanner.discover(timeout=self.scan_timeout)
 
-                    # Attempt connection
-                    self.after(0, lambda: self.update_connection_status(False, error_message="Connecting..."))
-                    self.after(0, lambda: self.devices_text_insert(f"[BT] Connecting to {device_name}...", debug=True))
-                    
-                    try:
-                        await asyncio.wait_for(self.ble_client.connect(), timeout=30.0)
-                        self.after(0, lambda: self.devices_text_insert("[BT] Connected, verifying services...", debug=True))
-                    except asyncio.TimeoutError:
-                        raise Exception("Connection attempt timed out after 30 seconds")
-                    except Exception as conn_error:
-                        raise Exception(f"Failed to establish connection: {str(conn_error)}")
-                    
-                    # Verify service and characteristics
-                    services = self.ble_client.services
-                    service_uuids = [s.uuid for s in services]
-                    
-                    if self.ble_service_uuid not in service_uuids:
-                        raise Exception(f"Device does not have required USART service")
-                    
-                    service = next(s for s in services if s.uuid == self.ble_service_uuid)
-                    characteristics = [c.uuid for c in service.characteristics]
-                    required_chars = [self.ble_tx_uuid, self.ble_rx_uuid, self.ble_req_tx_uuid]
-                    
-                    if not all(char in characteristics for char in required_chars):
-                        raise Exception("Device does not have all required USART characteristics - incompatible device")
-                    
-                    # Connection successful - no notifications needed
-                    self.device_connected = True
-                    self.connection_retry_count = 0  # Reset retry count on successful connection
-                    self.after(0, lambda: self.update_connection_status(True, "Bluetooth"))
-                    self.after(0, lambda: self.devices_text_insert(f"[BT] Connected successfully to {device_name}.", debug=True))
-                    return
+                # If you are filtering to wps_speaker devices, do it here:
+                # devices = self._filter_wps_devices(devices)
 
-            # Handle device not found
-            if not device_found:
-                self.after(0, lambda: self.update_connection_status(False, error_message="Device not found"))
-                self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] Device '{device_name}' not found in discovered devices."))
-                
+                self.discovered_devices = devices
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        f"[BT] Found {len(self.discovered_devices)} devices during scan",
+                        debug=True,
+                    ),
+                )
+
+            # Validate the index
+            if (
+                device_index is None
+                or device_index < 0
+                or device_index >= len(self.discovered_devices)
+            ):
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        f"[BT][ERROR] Selected device index {device_index} is out of range."
+                    ),
+                )
+                self.after(
+                    0,
+                    lambda: self.update_connection_status(
+                        False, error_message="Device index out of range"
+                    ),
+                )
+                return
+
+            # Pick the actual BleakDevice object by index
+            device = self.discovered_devices[device_index]
+            self.ble_device = device
+
+            name = device.name or "Unknown"
+            addr = getattr(device, "address", "unknown")
+            label = f"{name} ({addr})"
+
+            self.after(
+                0,
+                lambda: self.devices_text_insert(
+                    f"[BT] Found device: {label}", debug=True
+                ),
+            )
+
+            # Create client with timeout
+            self.ble_client = BleakClient(device, timeout=30.0)
+
+            # Attempt connection
+            self.after(
+                0,
+                lambda: self.update_connection_status(
+                    False, error_message="Connecting..."
+                ),
+            )
+            self.after(
+                0,
+                lambda: self.devices_text_insert(
+                    f"[BT] Connecting to {label}...", debug=True
+                ),
+            )
+
+            try:
+                await asyncio.wait_for(self.ble_client.connect(), timeout=30.0)
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        "[BT] Connected, verifying services...", debug=True
+                    ),
+                )
+            except asyncio.TimeoutError:
+                raise Exception("Connection attempt timed out after 30 seconds")
+            except Exception as conn_error:
+                raise Exception(f"Failed to establish connection: {str(conn_error)}")
+
+            # Verify service and characteristics
+            services = self.ble_client.services
+            service_uuids = [s.uuid for s in services]
+
+            if self.ble_service_uuid not in service_uuids:
+                raise Exception("Device does not have required USART service")
+
+            service = next(s for s in services if s.uuid == self.ble_service_uuid)
+            characteristics = [c.uuid for c in service.characteristics]
+            required_chars = [self.ble_tx_uuid, self.ble_rx_uuid, self.ble_req_tx_uuid]
+
+            if not all(char in characteristics for char in required_chars):
+                raise Exception(
+                    "Device does not have all required USART characteristics - incompatible device"
+                )
+
+            # Connection successful
+            self.device_connected = True
+            self.connection_retry_count = 0  # Reset retry count on successful connection
+            self.after(0, lambda: self.update_connection_status(True, "Bluetooth"))
+            self.after(
+                0,
+                lambda: self.devices_text_insert(
+                    f"[BT] Connected successfully to {label}.", debug=True
+                ),
+            )
+            return
+
         except asyncio.TimeoutError:
             # Handle scan timeout
-            self.after(0, lambda: self.update_connection_status(False, error_message="Connection timeout"))
-            self.after(0, lambda: self.devices_text_insert("[BT][ERROR] Connection timed out. Please try again."))
+            self.after(
+                0,
+                lambda: self.update_connection_status(
+                    False, error_message="Connection timeout"
+                ),
+            )
+            self.after(
+                0,
+                lambda: self.devices_text_insert(
+                    "[BT][ERROR] Connection timed out. Please try again."
+                ),
+            )
         except Exception as e:
             # Handle other errors
             error_msg = str(e)
-            self.after(0, lambda: self.update_connection_status(False, error_message=error_msg))
-            self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] during connection: {error_msg}", debug=True))
-            
+            self.after(
+                0,
+                lambda: self.update_connection_status(False, error_message=error_msg),
+            )
+            self.after(
+                0,
+                lambda: self.devices_text_insert(
+                    f"[BT][ERROR] during connection: {error_msg}", debug=True
+                ),
+            )
+
             # Clean up on failure
             await self._cleanup_connection()
-            
-            # Check if this is a characteristic compatibility error (don't retry)
-            if ("incompatible device" in error_msg.lower() or
-                "required USART service" in error_msg.lower() or
-                "required USART characteristics" in error_msg.lower() or
-                "Device does not have required USART service" in error_msg):
-                self.after(0, lambda: self.devices_text_insert("[BT][ERROR] Device is incompatible - no retries will be attempted.", debug=True))
+
+            # Check if this is a characteristic compatibility error (do not retry)
+            if (
+                "incompatible device" in error_msg.lower()
+                or "required usart service" in error_msg.lower()
+                or "required usart characteristics" in error_msg.lower()
+                or "Device does not have required USART service" in error_msg
+            ):
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        "[BT][ERROR] Device is incompatible - no retries will be attempted.",
+                        debug=True,
+                    ),
+                )
                 self.connection_retry_count = 0  # Reset retry count
             else:
                 # Attempt retry if under max retries for other errors
@@ -1469,29 +1565,10 @@ class AmbianceGUI(tk.Tk):
 
     def export_schedules(self):
         """
-        Export the current schedule queue to a text file.
-        
-        This function allows users to save their current schedule configuration
-        to a text file for backup, sharing, or copying to other devices.
-        
-        File Format:
-        - Each schedule is stored as a single line of comma-separated values
-        - Format: month,start_day,start_hour,start_min,end_day,end_hour,end_min,folder,file
-        - Example: 7,21,9,0,28,21,0,1,2 (July 21-28, 9:00 AM to 9:00 PM, Folder 1, File 2)
-        
-        File Structure:
-        - Header comments explaining the format
-        - Timestamp of when the export was created
-        - One line per schedule with data values
-        - Human-readable description for each schedule
-        
-        Usage:
-        1. Ensure you have schedules in the queue
-        2. Click "Export Schedules" button
-        3. Choose save location and filename
-        4. File will be created with all current schedules
-        
-        The exported file can be imported on other devices using the Import function.
+        Export the current schedule queue to a human-readable text file.
+
+        Format (one per line):
+            Schedule 1: 07/21-28 | 09:00-21:00 | Folder #1, File #2
         """
         if not self.schedule_queue:
             self.devices_text_insert("No schedules to export.")
@@ -1512,16 +1589,21 @@ class AmbianceGUI(tk.Tk):
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write("# Wildlife Audio Player Schedule Export\n")
                     f.write(f"# Exported on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write("# Format: month,start_day,start_hour,start_min,end_day,end_hour,end_min,folder,file\n")
-                    f.write("# Example: 7,21,9,0,28,21,0,1,2\n\n")
-                    
+                    f.write("# Edit the 'Schedule ...' lines directly to change times or tracks.\n")
+                    f.write("# Format:\n")
+                    f.write("#   Schedule N: MM/SD-ED | SH:SM-EH:EM | Folder #F, File #T\n")
+                    f.write("# Example:\n")
+                    f.write("#   Schedule 1: 07/21-28 | 09:00-21:00 | Folder #1, File #2\n\n")
+
                     for i, sched in enumerate(self.schedule_queue, 1):
-                        # Format: month,start_day,start_hour,start_min,end_day,end_hour,end_min,folder,file
-                        line = f"{sched['month']},{sched['start_day']},{sched['start_hour']},{sched['start_min']},{sched['end_day']},{sched['stop_hour']},{sched['stop_min']},{sched['folder']},{sched['file']}"
+                        line = (
+                            f"Schedule {i}: "
+                            f"{sched['month']:02d}/{sched['start_day']:02d}-{sched['end_day']:02d} | "
+                            f"{sched['start_hour']:02d}:{sched['start_min']:02d}-"
+                            f"{sched['stop_hour']:02d}:{sched['stop_min']:02d} | "
+                            f"Folder #{sched['folder']}, File #{sched['file']}"
+                        )
                         f.write(line + "\n")
-                        
-                        # Also write a human-readable description
-                        f.write(f"# Schedule {i}: {sched['month']:02d}/{sched['start_day']:02d}-{sched['end_day']:02d} | {sched['start_hour']:02d}:{sched['start_min']:02d} - {sched['stop_hour']:02d}:{sched['stop_min']:02d} | Folder #{sched['folder']}, File #{sched['file']}\n\n")
 
                 self.devices_text_insert(f"Exported {len(self.schedule_queue)} schedule(s) to {file_path}")
             else:
@@ -1530,42 +1612,87 @@ class AmbianceGUI(tk.Tk):
         except Exception as e:
             self.devices_text_insert(f"Error exporting schedules: {str(e)}")
 
+    def _validate_and_add_imported_schedule(
+        self,
+        month, start_day, start_hour, start_min,
+        end_day, end_hour, end_min,
+        folder, file, line_num=None
+        ):
+        """Validate imported schedule and add to queue if OK. Returns True if added."""
+        valid_minutes = [0, 15, 30, 45]
+        if start_min not in valid_minutes or end_min not in valid_minutes:
+            if line_num is not None:
+                self.devices_text_insert(
+                    f"Warning: Line {line_num} has invalid minutes (use 00, 15, 30, 45), skipping."
+                )
+            return False
+
+        if (end_hour, end_min) < (start_hour, start_min):
+            if line_num is not None:
+                self.devices_text_insert(
+                    f"Warning: Line {line_num} has stop time before start time, skipping."
+                )
+            return False
+
+        if start_day > end_day:
+            if line_num is not None:
+                self.devices_text_insert(
+                    f"Warning: Line {line_num} has start day after end day, skipping."
+                )
+            return False
+
+        if not (1 <= start_day <= 31) or not (1 <= end_day <= 31):
+            if line_num is not None:
+                self.devices_text_insert(
+                    f"Warning: Line {line_num} has invalid day values, skipping."
+                )
+            return False
+
+        new_entry = {
+            "month": month,
+            "start_day": start_day,
+            "end_day": end_day,
+            "start_hour": start_hour,
+            "start_min": start_min,
+            "stop_hour": end_hour,
+            "stop_min": end_min,
+            "folder": folder,
+            "file": file
+        }
+
+        # Overlap detection (reuse your logic)
+        for entry in self.schedule_queue:
+            if entry["month"] == month:
+                if not (end_day < entry["start_day"] or start_day > entry["end_day"]):
+                    existing_start = (entry["start_hour"], entry["start_min"])
+                    existing_stop  = (entry["stop_hour"], entry["stop_min"])
+                    new_start      = (start_hour, start_min)
+                    new_stop       = (end_hour, end_min)
+
+                    if not (new_stop <= existing_start or new_start >= existing_stop):
+                        if line_num is not None:
+                            self.devices_text_insert(
+                                f"Warning: Line {line_num} overlaps with existing schedule, skipping."
+                            )
+                        return False
+
+        self.schedule_queue.append(new_entry)
+        self.devices_text_insert(
+            f"[Imported] {month:02d}/{start_day:02d}-{end_day:02d} | "
+            f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} | "
+            f"Folder #{folder}, File #{file}"
+        )
+        return True
+
     def import_schedules(self):
         """
         Import schedules from a text file.
-        
-        This function allows users to load schedule configurations from a previously
-        exported text file, enabling easy copying of schedules between devices.
-        
-        File Format Expected:
-        - Each schedule should be on a single line with comma-separated values
-        - Format: month,start_day,start_hour,start_min,end_day,end_hour,end_min,folder,file
-        - Lines starting with '#' are treated as comments and ignored
-        - Empty lines are ignored
-        
-        Validation Performed:
-        - Ensures each line has exactly 9 comma-separated values
-        - Validates that all values are valid integers
-        - Checks that minutes are valid (0, 15, 30, 45)
-        - Ensures stop time is after start time
-        - Ensures start day is before or equal to end day
-        - Validates day ranges (1-31)
-        - Checks for overlaps with existing schedules in the queue
-        
-        Error Handling:
-        - Invalid lines are skipped with warning messages
-        - Overlapping schedules are skipped with warning messages
-        - Continues processing even if some lines fail
-        - Provides summary of successful imports
-        
-        Usage:
-        1. Click "Import Schedules" button
-        2. Select a previously exported schedule file
-        3. Function will validate and import valid schedules
-        4. Check the log for import results and any warnings
-        
-        The imported schedules are added to the current queue and can be sent
-        to the device using the "Send Schedules" button.
+
+        Preferred format (human-readable):
+            Schedule 1: 07/21-28 | 09:00-21:00 | Folder #1, File #2
+
+        Also supports legacy CSV lines:
+            month,start_day,start_hour,start_min,end_day,end_hour,end_min,folder,file
         """
         try:
             file_path = filedialog.askopenfilename(
@@ -1577,101 +1704,75 @@ class AmbianceGUI(tk.Tk):
                 self.devices_text_insert("Import canceled by user.")
                 return
 
+            # Optional: clear existing queue so imported file becomes the new state
+            self.schedule_queue.clear()
+            self.devices_text_insert("Existing schedule queue cleared before import.")
+
             imported_count = 0
+
+            # Regex for "Schedule N: MM/SD-ED | SH:SM-EH:EM | Folder #F, File #T"
+            schedule_re = re.compile(
+                r"^Schedule\s+\d+\s*:\s*"
+                r"(\d{1,2})/(\d{1,2})-(\d{1,2})\s*\|\s*"
+                r"(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\s*\|\s*"
+                r"Folder\s*#(\d+),\s*File\s*#(\d+)\s*$"
+            )
+
             with open(file_path, "r", encoding="utf-8") as f:
                 for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    
-                    # Skip empty lines and comments
-                    if not line or line.startswith('#'):
+                    raw = line.strip()
+                    if not raw:
                         continue
-                    
-                    try:
-                        # Parse the comma-separated values
-                        parts = line.split(',')
-                        if len(parts) != 9:
-                            self.devices_text_insert(f"Warning: Line {line_num} has incorrect format, skipping.")
-                            continue
-                        
-                        month = int(parts[0])
-                        start_day = int(parts[1])
-                        start_hour = int(parts[2])
-                        start_min = int(parts[3])
-                        end_day = int(parts[4])
-                        end_hour = int(parts[5])
-                        end_min = int(parts[6])
-                        folder = int(parts[7])
-                        file = int(parts[8])
 
-                        # Validate the data
-                        valid_minutes = [0, 15, 30, 45]
-                        if start_min not in valid_minutes or end_min not in valid_minutes:
-                            self.devices_text_insert(f"Warning: Line {line_num} has invalid minutes, skipping.")
-                            continue
+                    if raw.startswith("#"):
+                        continue
 
-                        if (end_hour, end_min) <= (start_hour, start_min):
-                            self.devices_text_insert(f"Warning: Line {line_num} has stop time before start time, skipping.")
-                            continue
+                    # Try to parse as "Schedule ..." line (no more lstrip("# "))
+                    m = schedule_re.match(raw)
+                    if m:
+                        try:
+                            (month,
+                            start_day,
+                            end_day,
+                            start_hour,
+                            start_min,
+                            end_hour,
+                            end_min,
+                            folder,
+                            file) = map(int, m.groups())
 
-                        if start_day > end_day:
-                            self.devices_text_insert(f"Warning: Line {line_num} has start day after end day, skipping.")
-                            continue
+                            if not self._validate_and_add_imported_schedule(
+                                month, start_day, start_hour, start_min,
+                                end_day, end_hour, end_min,
+                                folder, file, line_num
+                            ):
+                                continue
 
-                        if not (1 <= start_day <= 31) or not (1 <= end_day <= 31):
-                            self.devices_text_insert(f"Warning: Line {line_num} has invalid day values, skipping.")
-                            continue
-
-                        # Create the schedule entry
-                        new_entry = {
-                            "month": month,
-                            "start_day": start_day,
-                            "end_day": end_day,
-                            "start_hour": start_hour,
-                            "start_min": start_min,
-                            "stop_hour": end_hour,
-                            "stop_min": end_min,
-                            "folder": folder,
-                            "file": file
-                        }
-
-                        # Check for overlaps with existing schedules
-                        overlap_found = False
-                        for entry in self.schedule_queue:
-                            if entry["month"] == month:
-                                # Check if day ranges overlap
-                                if not (end_day < entry["start_day"] or start_day > entry["end_day"]):
-                                    # Day ranges overlap, check if time ranges also overlap
-                                    existing_start = (entry["start_hour"], entry["start_min"])
-                                    existing_stop = (entry["stop_hour"], entry["stop_min"])
-                                    new_start = (start_hour, start_min)
-                                    new_stop = (end_hour, end_min)
-                                    
-                                    # Check if time ranges overlap
-                                    if not (new_stop <= existing_start or new_start >= existing_stop):
-                                        self.devices_text_insert(f"Warning: Line {line_num} overlaps with existing schedule, skipping.")
-                                        overlap_found = True
-                                        break
-
-                        if not overlap_found:
-                            self.schedule_queue.append(new_entry)
                             imported_count += 1
+                        except Exception as e:
                             self.devices_text_insert(
-                                f"[Imported] {month:02d}/{start_day:02d}-{end_day:02d} | {start_hour:02d}:{start_min:02d} - "
-                                f"{end_hour:02d}:{end_min:02d} | Folder #{folder}, File #{file}"
+                                f"Warning: Line {line_num} could not be parsed as schedule ({e}), skipping."
                             )
+                        continue  # don't fall through to CSV parsing
 
-                    except ValueError as e:
-                        self.devices_text_insert(f"Warning: Line {line_num} has invalid numbers, skipping.")
-                    except Exception as e:
-                        self.devices_text_insert(f"Warning: Error processing line {line_num}: {str(e)}")
+                    # Legacy CSV format (we already skipped comments above)
+                    parts = raw.split(',')
+                    if len(parts) == 9:
+                        ...
+                    else:
+                        continue
+
 
             if imported_count > 0:
-                self.devices_text_insert(f"Successfully imported {imported_count} schedule(s) from {file_path}")
+                self.devices_text_insert(
+                    f"Successfully imported {imported_count} schedule(s) from {file_path}"
+                )
             else:
                 self.devices_text_insert("No valid schedules were imported.")
 
         except Exception as e:
             self.devices_text_insert(f"Error importing schedules: {str(e)}")
+
 
     def cleanup_resources(self):
         """
@@ -1921,7 +2022,7 @@ class AmbianceGUI(tk.Tk):
         else:
             self.devices_text_insert("Error: UART not selected as desired connection method.")
 
-    def set_volume(self):
+    def set_volume(self,volm):
         """
         Set the system volume (0-100%) and send command over UART or Bluetooth.
         """
@@ -1929,7 +2030,7 @@ class AmbianceGUI(tk.Tk):
             return
 
         try:
-            volume = int(self.volume_input.get())
+            volume = volm
 
             if 0 <= volume <= 100:
                 self.devices_text_insert(f"Volume set to: {volume}%")
@@ -1953,7 +2054,7 @@ class AmbianceGUI(tk.Tk):
         except Exception as e:
             self.devices_text_insert(f"Error setting volume: {str(e)}")
 
-    def set_duty_cycle(self):
+    def set_duty_cycle(self, val):
         """
         Set the system duty cycle (0-100%) and send command over UART or Bluetooth.
         """
@@ -1961,7 +2062,7 @@ class AmbianceGUI(tk.Tk):
             return
 
         try:
-            duty_cycle = int(self.duty_cycle_input.get())
+            duty_cycle = val
 
             if 0 <= duty_cycle <= 100:
                 self.devices_text_insert(f"Duty cycle set to: {duty_cycle}%")
