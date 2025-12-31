@@ -16,13 +16,16 @@
 #include "Scheduler.h"
 #include "discountIO.h"
 #include "FIFO.h"
+#include <limits.h>
 
 #include <stdio.h>
 #include <string.h>
+
 //----------------------------------------Private Defines----------------------------------------
 #define CYCLELENGTH (10/*minutes*/*60000/*milliseconds/minute*/)//duty cycle time in milliseconds
 #define RESETTIMER 2000
-#define FAILEDTRACKRECOVERY (10/*minutes*/*60000/*milliseconds/minute*/)
+#define FAILEDTRACKRECOVERY (2/*minutes*/*60000/*milliseconds/minute*/)
+#define DEFAULT_VOLUME 30 //startup volume
 
 
 //----------------------------------------Private Typedefs---------------------------------------
@@ -66,15 +69,17 @@ static uint32_t endtime;
 static uint32_t inittime;
 static uint8_t initialized;
 static DFinitSM_t initSM;
+static uint8_t df_error_retries = 0;
 
 static DFPacketState_t PacketSM;
 static DFPacket_t Packet;
 
 static uint8_t track;
 static uint8_t folder;
-static uint8_t firsttrack;
+static uint16_t firsttrack;
 static uint8_t nexttrack;
 static uint8_t lastplayed;
+static uint8_t lasttrack = 0;
 static uint8_t* folders;
 static uint8_t numfolders;
 
@@ -98,6 +103,16 @@ void MP3_SendData(char string[4]){
 	LPUART_WriteTx(accumulation&0xFF);//checksum
 	LPUART_WriteTx(0xEF);//start flag
 
+}
+
+static void MP3_PlayAbsolute(uint16_t index16) {
+    char send[4] = {
+        0x03,
+        0x00,
+        (char)((index16 >> 8) & 0xFF),     // high byte
+        (char)(index16 & 0xFF)             // low byte
+    };
+    MP3_SendData(send);
 }
 
 uint8_t parsePacket(char rx){
@@ -140,52 +155,64 @@ uint8_t parsePacket(char rx){
 		PacketSM = Param2;
 		Packet.Param2 = rx;
 		break;
-	case Param2:
-		uint16_t checkval = -(0x105+Packet.command+Packet.ack+Packet.Param1 +Packet.Param2);
-		if(rx == checkval>>8){
-			PacketSM = Checksum1;
-		}else {
-			PacketSM = Start;
-			char send[4] = {0x40, 0x00, 0x00, 0x06};
-			MP3_SendData(send);
-		}
-		break;
-	case Checksum1:
-		checkval = -(0x105+Packet.command+Packet.ack+Packet.Param1 +Packet.Param2);
-		if(rx == (checkval&0xFF)){
-			PacketSM = Checksum2;
-		}else {
-			PacketSM = Start;
-			char send[4] = {0x40, 0x00, 0x00, 0x06};
-			MP3_SendData(send);
-		}
-		break;
-	case Checksum2:
-		if(rx == 0xEF){
-			if(Packet.command == 0x40){
-				BSP_LED_On(LED_RED);
-				discountprintf("%X %X",Packet.Param1, Packet.Param2);
-				if(Packet.Param2 == 0x04){
-//					if(lastsent[0]==0x03){
-//						uint32_t rand = 0;
-//						HAL_RNG_GenerateRandomNumber(&hrng, &rand);
-//						rand &= 0xFF;//convert it to one byte of random data
-//						rand = (rand*(folders[folder-1])-1)/0xFF;//convert the one bye to the range of 0-max tracks-1
-//						char send[4] = {0x03, 0x00, 0x00, firsttrack+rand};
-//						MP3_SendData(send);
-//					}else {
-						MP3_SendData(lastsent);
-//					}
+	case Param2: {
+	    uint16_t checkval = -(0x105 + Packet.command + Packet.ack + Packet.Param1 + Packet.Param2);
+	    if (rx == (checkval >> 8)) {
+	        PacketSM = Checksum1;
+	    } else {
+	        // Bad checksum → just resync, do NOT send 0x40
+	        PacketSM = Start;
+	    }
+	    break;
+	}
 
-					PacketSM = Start;
-					return 0;
-				}
-			}
-			PacketSM = Start;
-			return 1;
-		}
-		PacketSM = Start;
-		break;
+	case Checksum1: {
+	    uint16_t checkval = -(0x105 + Packet.command + Packet.ack + Packet.Param1 + Packet.Param2);
+	    if (rx == (checkval & 0xFF)) {
+	        PacketSM = Checksum2;
+	    } else {
+	        // Bad checksum → just resync, do NOT send 0x40
+	        PacketSM = Start;
+	    }
+	    break;
+	}
+
+	case Checksum2:
+	    if (rx == 0xEF) {
+	        if (Packet.command == 0x40) {
+	            BSP_LED_On(LED_RED);
+
+	            // Only treat Param2==0x04 as the "bad track / error" code
+	            if (Packet.Param2 == 0x04) {
+	                // For the first few times, behave like the original code:
+	                // resend last command and DON'T bubble the packet up.
+	                if (df_error_retries < 3) {
+	                    df_error_retries++;
+	                    MP3_SendData(lastsent);
+	                    PacketSM = Start;
+	                    return 0;   // don't generate EVENT_LPUART
+	                } else {
+	                    // Too many retries on this error: treat as "song complete"
+	                    // so the upper layer advances to the next track.
+	                    df_error_retries = 0;
+	                    Packet.command = 0x3D;   // fake "song complete"
+	                    Packet.Param2 = track;   // say it was this track
+	                }
+	            } else {
+	                // Different error code: reset retry streak
+	                df_error_retries = 0;
+	            }
+	        } else {
+	            // Any non-0x40 packet means we're back in sync: reset streak
+	            df_error_retries = 0;
+	        }
+
+	        PacketSM = Start;
+	        return 1;  // full packet parsed → EVENT_LPUART will be posted
+	    }
+	    PacketSM = Start;
+	    break;
+
 	}
 	return 0;
 }
@@ -201,12 +228,17 @@ uint8_t MP3_Event_Init(FIFO Queue){
     MP3queue = Queue;
     TIMERS_Init();
     pause = 0x02;
-    DC = FLASH_GetDutyCycle();
-    volume = FLASH_GetVolume();
+    DC = 100;
+    volume = DEFAULT_VOLUME;
     starttime = TIMERS_GetMilliSeconds();
     inittime = TIMERS_GetMilliSeconds();
     initSM = setup;
     initialized = 0;
+
+    if (volume == 0xFF || volume > DEFAULT_VOLUME) {
+            volume = DEFAULT_VOLUME;
+        }
+
 	{
 	char send[4] = {0x0C, 0x00, 0x00, 0x00};//reset module
 	MP3_SendData(send);
@@ -249,27 +281,49 @@ Event_t MP3_Event_Updater(void){
 			MP3_Event_Post(event);
 		}
 	}
+
 	//checks a timer to un-pause the speaker to adhere to the duty cycle
-	if(pause == 1 && initialized){
-		uint32_t waittime = (endtime-starttime)*((100.0/((double)DC))-1);//Pause time = Active time * (1/DC-1)
-		uint32_t curtime = TIMERS_GetMilliSeconds();
-		if(curtime >= endtime+waittime){
-			event.status = EVENT_TIMEOUT;
-			MP3_Event_Post(event);
+	/*if(pause == 1 && initialized){
+	    uint32_t curtime = TIMERS_GetMilliSeconds();
+	    uint32_t active_time = (endtime > starttime) ? (endtime - starttime) : 0;
 
-		}
-
+	    uint32_t dc_percent = (uint32_t)DC;
+	    if(dc_percent == 0){
+	        // avoid division by zero;
+	    } else if (dc_percent >= 100) {
+	        // no pause
+	        event.status = EVENT_TIMEOUT;
+	        MP3_Event_Post(event);
+	    } else {
+	        // pause_time = active_time * (100 - DC) / DC
+	        uint64_t tmp = (uint64_t)active_time * (100u - dc_percent);
+	        uint32_t pause_time = (uint32_t)(tmp / dc_percent);
+	        if(curtime >= endtime + pause_time){
+	            event.status = EVENT_TIMEOUT;
+	            MP3_Event_Post(event);
+	        }
+	    }
 	}
+
 	//error recover, the MP3 Player should have finished the track by now
-	if(pause == 0 && initialized){
-		if(TIMERS_GetMilliSeconds() > FAILEDTRACKRECOVERY){
-			Packet.command = 0x3D;//hijack the system to pretend like the track ended
-			Packet.Param2 = track;
-			starttime = TIMERS_GetMilliSeconds();
-			event.status = EVENT_LPUART;
-			MP3_Event_Post(event);
-		}
+	if (initialized && pause == 0) {
+	    uint32_t now = TIMERS_GetMilliSeconds();
+	    if (now - starttime > FAILEDTRACKRECOVERY) {
+	        // simulate "song complete" once
+	        Packet.command = 0x3D;
+	        Packet.Param2 = track;
+	        endtime = now;
+	        event.status = EVENT_LPUART;
+	        MP3_Event_Post(event);
+
+	        // reset so we don't fire again immediately
+	        starttime = now;
+	    }
 	}
+	if (pause == 1 && initialized) {
+	    event.status = EVENT_TIMEOUT;
+	    MP3_Event_Post(event);
+	}*/
 
 	//check for init timer events
     if(((timer-inittime) >= 3000) && !initialized){//wait for the speaker to be ready for use n initialization
@@ -294,183 +348,162 @@ Event_t MP3_Event_Updater(void){
  * @return: An 8 byte integer success flag, returns 0 if the program should crash
  */
 uint8_t MP3_Event_Handler(Event_t event){
-	if(event.status == EVENT_INIT){
-//		static FIFO tempFolders;
-//		switch (initSM){
-//		case setup:
-//			if(event.data == 0){
-//				{
-//				char send[4] = {0x0E, 0x00, 0x00, 0x00};//pause
-//				MP3_SendData(send);
-//				}
-//				numfolders = 1;
-//				tempFolders = FIFO_Create();
-//				inittime = TIMERS_GetMilliSeconds();
-//
-//				{
-//				char send[4] = {0x4E, 0x00, 0x00, numfolders};//query the number of files on the micrSD
-//				MP3_SendData(send);
-//				}
-//				initSM = scanning;
-//			}
-//			break;
-//		case scanning:
-//			if(event.data == 0){//timeout
-//				{
-//				char send[4] = {0x4E, 0x00, 0x00, numfolders};//query the number of files on the micrSD
-//				MP3_SendData(send);
-//				}
-//				inittime = TIMERS_GetMilliSeconds();
-//			}else if(event.data == 1){//packet complete
-//
-//				if(Packet.command==0x4E){//MP3 returned the query with then number of files in the folder
-//					numfolders++;
-//					FIFO_Enqueue(tempFolders, (Event_t){EVENT_NONE, Packet.Param2});
-//
-//					{
-//					char send[4] = {0x4E, 0x00, 0x00, numfolders};//query the number of files on the micrSD
-//					MP3_SendData(send);
-//					}
-//					inittime = TIMERS_GetMilliSeconds();
-//				}else if(Packet.command == 0x40){//The MP3 return an error for no folder found, meaning we ran out of folders to scan
-//
-//					numfolders--;
-//					folders = malloc(sizeof(uint8_t)*numfolders);
-//					for(int i = 0; i < numfolders; i++){
-//						folders[i] = FIFO_Dequeue(tempFolders).data;
-//					}
-//					FIFO_Destroy(tempFolders);
-//					initialized = 1;
-//					char send[4] = {0x06, 0x00, 0x00, (uint8_t)(((uint16_t)volume)*30/100)};
-//					MP3_SendData(send);
-//				}//^scanning state
-//			}
-//			break;
-//		default:
-//
-//			break;
-//		}
-		{
-		char send[4] = {0x0E, 0x00, 0x00, 0x00};//pause
-		MP3_SendData(send);
-		}
-		uint8_t scanning = 1;
-		numfolders = 1;
-		FIFO tempFolders = FIFO_Create();
-		while(scanning){//^setup state
-			{
-			char send[4] = {0x4E, 0x00, 0x00, numfolders};//query the number of files on the micrSD
-			MP3_SendData(send);
-			}
-			uint32_t time = TIMERS_GetMilliSeconds();
-			while(!parsePacket(LPUART_ReadRx()) && (time+1000) > TIMERS_GetMilliSeconds());
-			if((time+1000) < TIMERS_GetMilliSeconds()){
-				continue;// reattempt communication
-			}
-			if(Packet.command==0x4E){
-				numfolders++;
-				FIFO_Enqueue(tempFolders, (Event_t){EVENT_NONE, Packet.Param2});
-			}else if(Packet.command == 0x40){
-				scanning = 0;
-			}//^scanning state
-		}
-		numfolders--;
-		folders = malloc(sizeof(uint8_t)*numfolders);
-		for(int i = 0; i < numfolders; i++){
-			folders[i] = FIFO_Dequeue(tempFolders).data;
-		}
-		FIFO_Destroy(tempFolders);
-		initialized = 1;
-		char send[4] = {0x06, 0x00, 0x00, (uint8_t)(((uint16_t)volume)*30/100)};
-		MP3_SendData(send);
-	}
-	if(event.status == EVENT_TIMEOUT){
-		//restart the MP3 player
-		pause = 0;
-		starttime = TIMERS_GetMilliSeconds();
-		track = nexttrack;
-		lastplayed = 0;//removes the devices memory of the last played track to allow repeat songs
-		char send[4] = {0x03, 0x00, 0x00, firsttrack+nexttrack-1};
-		MP3_SendData(send);
+    if(event.status == EVENT_INIT){
+        {
+            char send[4] = {0x0E, 0x00, 0x00, 0x00}; // pause
+            MP3_SendData(send);
+        }
+        uint8_t scanning = 1;
+        numfolders = 1;
+        FIFO tempFolders = FIFO_Create();
+        while(scanning){//^setup state
+            {
+                char send[4] = {0x4E, 0x00, 0x00, numfolders}; // query files in folder
+                MP3_SendData(send);
+            }
+            uint32_t time = TIMERS_GetMilliSeconds();
+            while(!parsePacket(LPUART_ReadRx()) && (time+1000) > TIMERS_GetMilliSeconds());
+            if((time+1000) < TIMERS_GetMilliSeconds()){
+                continue; // reattempt communication
+            }
+            if(Packet.command==0x4E){
+                numfolders++;
+                FIFO_Enqueue(tempFolders, (Event_t){EVENT_NONE, Packet.Param2});
+            }else if(Packet.command == 0x40){
+                scanning = 0;
+            }//^scanning state
+        }
+        numfolders--;
+        folders = malloc(sizeof(uint8_t)*numfolders);
+        for(int i = 0; i < numfolders; i++){
+            folders[i] = FIFO_Dequeue(tempFolders).data;
+        }
+        FIFO_Destroy(tempFolders);
+        initialized = 1;
+        char send[4] = {0x06, 0x00, 0x00, (uint8_t)(((uint16_t)volume)*30/100)};
+        MP3_SendData(send);
+    }
 
-	}if(event.status == EVENT_PLAY){
-		char text[30];
-		sprintf(text, "Play event: %d, %d", event.data>>8, (event.data&0xFF));
-		discountprintf(text);
-		Scheduler_Event_Post(event);
-		starttime = TIMERS_GetMilliSeconds();
-		//if 0 < folder <= max folders and 0 < track <= max tracks in given folder
-		if(event.data>>8 != 0 && (event.data>>8) <= numfolders){
-			if((event.data&0xFF)!= 0 && (event.data&0xFF) <= folders[(event.data>>8)-1]){
-				pause = 0;
-				//store the desired track and folder
-				folder = event.data>>8;
-				track = event.data&0xFF;
-				//calculate the absolute position of the desired track
-				firsttrack = 1;
-				for(int i = 0; i < folder-1; i ++){
-					firsttrack+= folders[i];
-				}
-				//update the desired track to the MP3
-				{
-				char send2[4] = {0x03, 0x00, 0x00, firsttrack+track-1};
-				MP3_SendData(send2);
-				HAL_Delay(100);
-				}
-				//send a play signal
-				{
-				char send[4] = {0x0D, 0x00, 0x00, 0x00};
-				MP3_SendData(send);
-				}
-				lastplayed = 0;//allow the event play to play the same track that was played before
-			}
-		}else {
+    if (event.status == EVENT_TIMEOUT) {
+        // restart the MP3 player
+        pause = 0;
+        starttime = TIMERS_GetMilliSeconds();
 
-			pause = 0x02;
-			{
-			char send[4] = {0x0E, 0x00, 0x00, 0x00};//pause
-			MP3_SendData(send);
-			}
-			//set folder and track to zero, this is so that when other modules query/track, a zero can indicate paused
-			folder = 0;
-			track = 0;
-		}
+        // Guard: only compute firsttrack if folder index is valid
+        if (folder >= 1 && folder <= numfolders && folders != NULL) {
+            firsttrack = 1;
+            for (int i = 0; i < folder - 1; i++) {
+                firsttrack += folders[i];
+            }
 
+            //track = nexttrack;
+            //lastplayed = 0; // allow repeat songs
+            uint16_t abs_ind = firsttrack + nexttrack - 1;
+            MP3_PlayAbsolute(abs_ind);
+        } else {
+            // invalid folder -> pause safely
+            pause = 1;
+            char send[4] = {0x0E, 0x00, 0x00, 0x00};
+            MP3_SendData(send);
+            return 0;
+        }
+    }
 
-	}if(event.status == EVENT_SETTINGS){
-		DC = FLASH_GetDutyCycle();
-		volume = FLASH_GetVolume();
-//		char text[30];
-//		sprintf(text, "Settings event: %d, %d", event.data>>8, (event.data&0xFF));
-//		discountprintf(text);
-		if(!event.data){//volume == FLASH_GetVolume()
-			//send new volume to the mp3 player
-			char send[4] = {0x06, 0x00, 0x00, (uint8_t)(((uint16_t)volume)*30/100)};
-			MP3_SendData(send);
-		}
-	}if (event.status == EVENT_LPUART){
-		if(Packet.command == 0x3D){//song complete
-			if(Packet.Param2 != lastplayed){//prevent the mp3 play from sending the same command twice
-				lastplayed = Packet.Param2;
-				endtime = TIMERS_GetMilliSeconds();
-				if(folder){
-					uint32_t rand = 0;
-					do{//provide a simplistic method of out of bounds detection (should be unused)
-						HAL_RNG_GenerateRandomNumber(&hrng, &rand);
-						rand &= 0xFF;//convert it to one byte of random data
-						rand = (rand*(folders[folder-1])-1)/0xFF;//convert the one bye to the range of 0-max tracks-1
-						nexttrack = rand+1;
-					}while(nexttrack > folders[folder-1]);//prevent repeat tracks to avoid confusion the same command twice code above
-					track = 0;
-					pause = 1;//entering duty cycle pause
-					char send[4] = {0x0E, 0x00, 0x00, 0x00};//pause
-					MP3_SendData(send);
-				}
-			}
+    if (event.status == EVENT_LPUART) {
+        if (Packet.command == 0x3D) {                 // song complete
+            if (Packet.Param2 != lastplayed) {        // prevent duplicate handling
+                lastplayed = Packet.Param2;
+                endtime = TIMERS_GetMilliSeconds();
 
-		}
+                // Guard: ensure folder index is valid
+                if (folder >= 1 && folder <= numfolders && folders != NULL) {
+                    uint32_t n = folders[folder - 1];     // tracks in current folder
+                    if (n == 0) {
+                        //pause = 1;
+                        return 0;                         // function returns uint8_t
+                    }
 
-	}
+                    // Uniform draw in [0, n-1] using rejection sampling (no modulo bias)
+                    uint32_t r;
+                    uint32_t limit = UINT32_MAX - (UINT32_MAX % n);
+                    do {
+                    	HAL_RNG_GenerateRandomNumber(&hrng, &r);
+                    } while (r >= limit);
+                    uint32_t idx = r % n;                 // 0..n-1
+                    nexttrack = idx + 1;                  // 1..n
+
+                    // Optional: avoid immediate repeat of the last chosen track (within-folder index)
+                    if (n > 1 && nexttrack == lasttrack) {
+                        nexttrack = (nexttrack % n) + 1;
+                    }
+                    lasttrack = nexttrack;                // remember selection
+
+                    track = nexttrack;
+                    firsttrack = 1;
+                    for(int i = 0; i < folder - 1; i++){
+                    	firsttrack += folders[i];
+                    }
+                    uint16_t abs_ind = firsttrack + nexttrack - 1;
+                    starttime = TIMERS_GetMilliSeconds();
+                    MP3_PlayAbsolute(abs_ind);
+                    return 1;
+                } else {
+                    return 0;
+                }
+            }
+        }
+    }
+
+    if(event.status == EVENT_PLAY){
+        Scheduler_Event_Post(event);
+        starttime = TIMERS_GetMilliSeconds();
+        // if 0 < folder <= max folders and 0 < track <= max tracks in given folder
+        if((event.data>>8) != 0 && (event.data>>8) <= numfolders){
+            if((event.data&0xFF) != 0 && (event.data&0xFF) <= folders[(event.data>>8)-1]){
+                pause = 0;
+                // store the desired track and folder
+                folder = event.data>>8;
+                track = event.data&0xFF;
+                // calculate the absolute position of the desired track
+                firsttrack = 1;
+                for(int i = 0; i < folder-1; i ++){
+                    firsttrack += folders[i];
+                }
+                // update the desired track to the MP3
+                {
+                	uint16_t absIndex = firsttrack + track - 1;
+                	MP3_PlayAbsolute(absIndex);
+                	HAL_Delay(100);
+                }
+                // send a play signal
+                {
+                    char send[4] = {0x0D, 0x00, 0x00, 0x00};
+                    MP3_SendData(send);
+                }
+                lastplayed = 0; // allow EVENT_PLAY to play same track as before
+            }
+        } else {
+            pause = 0x02;
+            {
+                char send[4] = {0x0E, 0x00, 0x00, 0x00}; // pause
+                MP3_SendData(send);
+            }
+            // set folder and track to zero so other modules can see "paused"
+            folder = 0;
+            track = 0;
+        }
+    }
+
+    if(event.status == EVENT_SETTINGS){
+        DC = 100;
+        volume = FLASH_GetVolume();
+        if(!event.data){ // if just volume change
+            // send new volume to the mp3 player
+            char send[4] = {0x06, 0x00, 0x00, (uint8_t)(((uint16_t)volume)*30/100)};
+            MP3_SendData(send);
+        }
+    }
+
     return 1;
 }
 
