@@ -1,9 +1,9 @@
 /*
  * Name: MP3.c
  * Brief: DFPlayer/MP3 module for event/service framework.
- * Author: Caitlin Bonesio
+ * Author: Caitlin Bonesio, Simon Nakarmi
  * Created: 4/19/25
- * Modified: 4/23/25
+ * Modified: 2/3/26
  *
  * Notes:
  * - Communicates with the MP3 module over LPUART using DFPlayer-style packets.
