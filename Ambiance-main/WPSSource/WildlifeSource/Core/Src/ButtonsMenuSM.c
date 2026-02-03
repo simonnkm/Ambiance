@@ -885,5 +885,3 @@ uint8_t ButtonsMenuSM_Event_Handler(Event_t event){
 	}
     return 1;
 }
-
-

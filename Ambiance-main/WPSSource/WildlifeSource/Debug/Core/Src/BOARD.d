@@ -48,9 +48,9 @@ Core/Src/BOARD.o: ../Core/Src/BOARD.c ../Core/Inc/BOARD.h \
  ../System/Config/Debug_GPIO/debug_config.h ../Core/Inc/app_conf.h \
  ../Projects/Common/BLE/Modules/RTDebug/debug_signals.h \
  ../Projects/Common/BLE/Modules/compiler.h \
- C:/Users/stipi/Desktop/HWstuff/ECE129/WildlifeSource/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo.h \
+ C:/Users/simon/Downloads/INTERNPROJECT/Ambiance-main/Ambiance-main/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo.h \
  ../Core/Inc/stm32wb0x_nucleo_conf.h \
- C:/Users/stipi/Desktop/HWstuff/ECE129/WildlifeSource/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo_errno.h
+ C:/Users/simon/Downloads/INTERNPROJECT/Ambiance-main/Ambiance-main/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo_errno.h
 ../Core/Inc/BOARD.h:
 ../Drivers/STM32WB0x_HAL_Driver/Inc/stm32wb0x_hal.h:
 ../Core/Inc/stm32wb0x_hal_conf.h:
@@ -104,6 +104,6 @@ Core/Src/BOARD.o: ../Core/Src/BOARD.c ../Core/Inc/BOARD.h \
 ../Core/Inc/app_conf.h:
 ../Projects/Common/BLE/Modules/RTDebug/debug_signals.h:
 ../Projects/Common/BLE/Modules/compiler.h:
-C:/Users/stipi/Desktop/HWstuff/ECE129/WildlifeSource/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo.h:
+C:/Users/simon/Downloads/INTERNPROJECT/Ambiance-main/Ambiance-main/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo.h:
 ../Core/Inc/stm32wb0x_nucleo_conf.h:
-C:/Users/stipi/Desktop/HWstuff/ECE129/WildlifeSource/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo_errno.h:
+C:/Users/simon/Downloads/INTERNPROJECT/Ambiance-main/Ambiance-main/WPSSource/WildlifeSource/Drivers/BSP/STM32WB0x-nucleo/stm32wb0x_nucleo_errno.h:
