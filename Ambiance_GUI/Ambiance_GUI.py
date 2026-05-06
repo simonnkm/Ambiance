@@ -742,9 +742,7 @@ class AmbianceGUI(tk.Tk):
         """Return only devices that look like our wps speakers."""
         filtered = []
         for d in devices:
-            name = (d.name or "").lower()
-            if "wps_speaker" in name:   # or name.startswith("wps_") etc.
-                filtered.append(d)
+            filtered.append(d)
         return filtered
 
     def _update_scan_results(self, devices):
