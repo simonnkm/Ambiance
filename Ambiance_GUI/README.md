@@ -9,6 +9,107 @@ This GUI application allows users to connect to STM32-based audio devices via UA
 - Log downloading and saving
 - Real-time UART debug display
 
+## GUI Components
+
+The Ambiance GUI is organized into four main sections: connection controls, playback controls, scheduler controls, and the output log.
+
+### Connection Controls
+
+The connection area lets the user choose between UART and Bluetooth.
+
+For UART, the GUI provides:
+
+* Baud rate selection
+* Serial port list
+* Refresh button
+* Connect and disconnect buttons
+
+For Bluetooth, the GUI provides:
+
+* Scan for Devices button
+* Discovered Devices list
+* Connect and disconnect buttons
+
+The connection status indicator shows whether the system is disconnected, connecting, or connected.
+
+### Bluetooth Device List
+
+The Bluetooth scan displays discovered Bluetooth devices using the device name and the end of the device address. This makes it easier to tell apart devices with similar or missing names.
+
+The current WPS speaker filter does not remove non-speaker devices. It returns every discovered Bluetooth device. Compatibility is checked after the user selects a device and attempts to connect.
+
+During connection, the GUI verifies that the selected device has the required Ambiance BLE service and characteristics. Devices without the required service are rejected as incompatible.
+
+### Playback Controls
+
+The control panel includes:
+
+* Volume slider
+* Duty cycle slider
+* Manual folder number input
+* Manual file number input
+* Send Track button
+
+The volume slider sets the playback volume.
+
+The duty cycle slider controls the playback duty cycle percentage.
+
+The track selection fields allow the user to send a specific folder and file number to the DFPlayer Mini.
+
+### Scheduler Controls
+
+The scheduler allows timed playback entries to be created and sent to the device.
+
+Each schedule entry contains:
+
+* Month
+* Start day
+* End day
+* Start hour and minute
+* Stop hour and minute
+* Folder number
+* File number
+
+The month field supports `0` for monthly repeating schedules.
+
+The minute fields use 15-minute increments: `00`, `15`, `30`, and `45`.
+
+The GUI checks schedule entries before adding them to the queue. It rejects invalid day ranges, invalid time ranges, invalid minutes, and overlapping schedules.
+
+### Schedule Actions
+
+The scheduler includes the following actions:
+
+* Add Entry
+* Send Schedules
+* Clear Queue
+* Export Schedules
+* Import Schedules
+
+`Add Entry` adds the current schedule to the queue.
+
+`Send Schedules` sends all queued schedules to the connected device.
+
+`Clear Queue` removes all queued schedules from the GUI.
+
+`Export Schedules` saves the queued schedules to a text file.
+
+`Import Schedules` loads schedules from a saved text file and validates them before adding them to the queue.
+
+### Log and Output Window
+
+The output window displays connection messages, Bluetooth/UART communication, schedule actions, errors, and debug messages.
+
+The GUI includes:
+
+* Download Log
+* Clear Output
+
+`Download Log` requests the device log and saves it as a text file.
+
+`Clear Output` clears the visible log window.
+
+
 ---
 
 
@@ -190,5 +291,7 @@ python Ambiance_GUI.py
 
 ## Author
 **Jaspreet Singh**  
-Developer of the Wildlife Audio Player GUI  
 [https://github.com/jsingh08](https://github.com/jsingh08)
+
+**Simon Nakarmi**
+[https://github.com/simonnkm](https://github.com/simonnkm)
