@@ -8,19 +8,34 @@
 #include "FLASH.h"
 #include "BOARD.h"
 
-#define VOLUMEADDRESS  	0x1006E000
-#define DCADDRESS 		0x1006E001
-#define SCHEDULEADDRESS	0x1006F000
-#define LOGSADDRESS 	0x1006E800
+/*
+ * These addresses used to sit at 0x1006E000-0x1006FFFF, with SCHEDULEADDRESS
+ * (0x1006F000) landing exactly on the BLE stack's own NVM database region
+ * (see NVM_START_ADDRESS in Projects/Common/BLE/Modules/NVMDB/Src/nvm_db_conf.c
+ * and REGION_NVM in the linker script) - every schedule write and every BLE
+ * bonding/GATT persist were silently overwriting each other's flash.
+ * Moved to a dedicated block reserved by the linker script
+ * (FLASH_APPDATA_SIZE / REGION_APPDATA in STM32WB05KZVX_FLASH.ld) so the
+ * build fails instead of silently corrupting data if code ever grows into it.
+ */
+#define VOLUMEADDRESS  	0x1006C000
+#define DCADDRESS 		0x1006C001
+#define LOGSADDRESS 	0x1006C800
+#define SCHEDULEADDRESS	0x1006E800
 
-#define DCVOLPAGE		92
-#define SCHEDULEPAGE	94
-#define LOGSPAGE		93
+#define DCVOLPAGE		88
+#define LOGSPAGE		89//logs span LOGSPAGES consecutive pages starting here
+#define SCHEDULEPAGE	93
 
 #define FLASHEMPTY 0xFF
 #define FLASHPAGESIZE 0x800
 
 #define SCHEDULEEVENTSIZE 8//must be a multiple of 4
+
+//logs get LOGSPAGES pages (instead of the usual 1) so a full 10-week, 2-hour-
+//interval deployment fits without ever needing a mid-deployment download.
+#define LOGSPAGES 4
+#define LOGSCAPACITY ((LOGSPAGES*FLASHPAGESIZE)/SCHEDULEEVENTSIZE)
 
 
 static int16_t ScheduleSize;
@@ -46,7 +61,7 @@ uint8_t FLASH_Init(){
 		}
 	}
 	//find size of logs
-	for(int i = 0; i < FLASHPAGESIZE/SCHEDULEEVENTSIZE; i++){
+	for(int i = 0; i < LOGSCAPACITY; i++){
 		if ((uint8_t)(*(uint8_t*)(LOGSADDRESS+(i*SCHEDULEEVENTSIZE))) == FLASHEMPTY ){
 			LogsSize = i;
 			break;
@@ -82,7 +97,14 @@ uint8_t FLASH_SetDCVol(uint8_t volume, uint8_t DC){
 	erase.NbPages = 1;
 	erase.TypeErase = FLASH_TYPEERASE_PAGES;
 	uint32_t faultypage;
-	HAL_FLASHEx_Erase(&erase, &faultypage);
+	if(HAL_FLASHEx_Erase(&erase, &faultypage) != HAL_OK){
+		/* Page didn't actually erase to all-1s: programming over it now would
+		 * silently AND the new value into whatever was already there instead
+		 * of writing it (HAL_FLASH_Program can still report HAL_OK even
+		 * though the stored volume/duty-cycle ends up wrong), so bail here
+		 * instead of proceeding. */
+		return 0;
+	}
 	FLASH_GetVolume();
 	FLASH_GetDutyCycle();
 	uint32_t data = ((uint32_t)(DC)<<8)+(uint32_t)(volume);
@@ -124,7 +146,13 @@ uint8_t FLASH_GetDutyCycle(){
  */
 uint8_t FLASH_AppendLogs(scheduleEvent event){
 	if(!initialized){return 0;}
-	if (LogsSize >=FLASHPAGESIZE/SCHEDULEEVENTSIZE){return 0;}
+	if (LogsSize >= LOGSCAPACITY){
+		//logs full (~85 days at the 2-hour logging interval, comfortably past
+		//the 10-week deployment): drop the oldest batch and keep logging
+		//rather than silently stopping. Should only be reached if the device
+		//runs well past its planned deployment length without a download.
+		if(!FLASH_ClearLogs()){return 0;}
+	}
 	uint32_t Data1 = (event.month)|(event.daystart<<8)|(event.start<<16)|(event.stop<<24);
 	uint32_t Data2 = (event.daystop)|(event.folder<<8)|(event.track<<16);
 	//this isn't blocking code officer I swear! (this is blocking code, to be improved later)
@@ -158,7 +186,7 @@ uint16_t FLASH_GetLogsSize(){
 scheduleEvent FLASH_ReadLogs(uint16_t index){
 	scheduleEvent event = (scheduleEvent){0, 0, 0, 0, 0, 0};
 	if(!initialized){return event;}
-	if(index >= 0 && index <= LogsSize){
+	if(index >= 0 && index < LogsSize){
 		event.month = *((uint8_t*)(LOGSADDRESS+index*SCHEDULEEVENTSIZE));
 		event.daystart = *((uint8_t*)(LOGSADDRESS+index*SCHEDULEEVENTSIZE+1));
 		event.start = *((uint8_t*)(LOGSADDRESS+index*SCHEDULEEVENTSIZE+2));
@@ -181,7 +209,7 @@ uint8_t FLASH_ClearLogs(){
 	LogsSize = 0;
 	FLASH_EraseInitTypeDef erase;
 	erase.Page = LOGSPAGE;
-	erase.NbPages = 1;
+	erase.NbPages = LOGSPAGES;
 	erase.TypeErase = FLASH_TYPEERASE_PAGES;
 	uint32_t faultypage;
 	HAL_StatusTypeDef status = HAL_FLASHEx_Erase(&erase, &faultypage);

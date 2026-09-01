@@ -449,8 +449,18 @@ uint8_t MP3_Event_Handler(Event_t event){
         numfolders--;
 
         folders = malloc(sizeof(uint8_t) * numfolders);
-        for (int i = 0; i < numfolders; i++) {
-            folders[i] = FIFO_Dequeue(tempFolders).data;
+        if (folders != NULL) {
+            for (int i = 0; i < numfolders; i++) {
+                folders[i] = FIFO_Dequeue(tempFolders).data;
+            }
+        } else {
+            /* Out of memory: leave numfolders at 0 so every place that
+             * gates on "folder <= numfolders && folders != NULL" (EVENT_TIMEOUT,
+             * the 0x3D song-complete handler) safely no-ops instead of
+             * dereferencing a NULL folders pointer. Playback for this boot
+             * just won't start; nothing else about the scan/init sequence
+             * changes. */
+            numfolders = 0;
         }
         FIFO_Destroy(tempFolders);
 
@@ -610,6 +620,17 @@ uint8_t MP3_Event_Handler(Event_t event){
  */
 uint16_t MP3_GetCurrentFile(void){
     return ((uint16_t)folder << 8) + track;
+}
+
+/**
+ * @brief Report whether the speaker is broadcasting, programmed-silent, or dead.
+ * @return MP3_STATUS_DEAD / MP3_STATUS_BROADCASTING / MP3_STATUS_PROGRAMMED_SILENCE
+ */
+uint8_t MP3_GetStatus(void){
+    if (!initialized) {
+        return MP3_STATUS_DEAD;
+    }
+    return (pause == 0) ? MP3_STATUS_BROADCASTING : MP3_STATUS_PROGRAMMED_SILENCE;
 }
 
 //----------------------------------------Test Harness-------------------------------------------

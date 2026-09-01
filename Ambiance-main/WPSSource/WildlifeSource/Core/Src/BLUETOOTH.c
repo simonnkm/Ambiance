@@ -45,7 +45,11 @@ uint8_t BLUETOOTH_WriteBuffer(uint8_t input){
 		buffer.data[buffer.head] = input;
 		buffer.head++;
 		buffer.head %= BTBUFFERSIZE;
-		buffer.full = ((buffer.head+1)%BTBUFFERSIZE == buffer.tail);
+		/* head just caught up to tail -> buffer is now genuinely full.
+		 * (previously checked one slot early via head+1==tail, which made
+		 * the buffer report full with one byte of headroom still unused,
+		 * silently dropping the last byte of outbound BLE-UART data under load) */
+		buffer.full = (buffer.head == buffer.tail);
 
 		return 1;
 	} else {
@@ -66,7 +70,11 @@ int16_t BLUETOOTH_ReadBuffer(){
 		ret = buffer.data[buffer.tail];
 		buffer.tail++;
 		buffer.tail %= BTBUFFERSIZE;
-		buffer.full = ((buffer.head+1)%BTBUFFERSIZE == buffer.tail);
+		/* a read always frees exactly one slot, so the buffer can never be
+		 * full immediately afterward - clear the flag directly rather than
+		 * re-deriving it (deriving via head==tail here would wrongly read
+		 * as "full" right as the buffer empties out). */
+		buffer.full = 0;
 	}
 	return ret;
 }

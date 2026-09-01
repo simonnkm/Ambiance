@@ -272,7 +272,7 @@ Event_t ButtonsMenuSM_Event_Updater(void){
 
     uint8_t currbuttons = GPIO_ReadButtons();
 
-    if(currbuttons != lastbuttons && (debounce + DEBOUNCETIME < TIMERS_GetMilliSeconds())){
+    if(currbuttons != lastbuttons && ((uint32_t)(TIMERS_GetMilliSeconds() - debounce) >= DEBOUNCETIME)){
     	event.status = EVENT_BUTTONS;
     	event.data = (((uint16_t)currbuttons ^ (uint16_t)lastbuttons) << 8) + (uint16_t)currbuttons;
     	lastbuttons = currbuttons;
@@ -281,7 +281,7 @@ Event_t ButtonsMenuSM_Event_Updater(void){
     	timeractive = 1;
     	ButtonsMenuSM_Event_Post(event);
     }
-    if(timeractive & (timer+SLEEPTIMER < TIMERS_GetMilliSeconds())){
+    if(timeractive & ((uint32_t)(TIMERS_GetMilliSeconds() - timer) >= SLEEPTIMER)){
     	event.status = EVENT_TIMEOUT;
     	event.data = 0;
     	timeractive = 0;// disable sleep timer until next button press
@@ -361,9 +361,15 @@ uint8_t ButtonsMenuSM_Event_Handler(Event_t event){
 				} else
 				if(event.data & B5XORMASK && !(event.data & B5MASK)){
 					//discountprintf("decrementing volume");
-					uint8_t vol = FLASH_GetVolume()-5;
-					if(vol >= 0){
-						FLASH_SetDCVol(vol, FLASH_GetDutyCycle());
+					uint8_t curvol = FLASH_GetVolume();
+					/* FLASH_GetVolume() is a uint8_t: at curvol<5 the old
+					 * "-5" wrapped to ~250+ instead of going negative, so
+					 * "vol >= 0" was always true and a corrupted volume got
+					 * written to flash and sent to the DFPlayer. Guard the
+					 * subtraction itself instead (mirrors the volume-up
+					 * branch below refusing out-of-range changes). */
+					if(curvol >= 5){
+						FLASH_SetDCVol(curvol-5, FLASH_GetDutyCycle());
 					}
 					DrawMain(month, day, hour, minute);
 
@@ -766,12 +772,16 @@ uint8_t ButtonsMenuSM_Event_Handler(Event_t event){
 						transition = 1;
 						break;
 					case 3:
-						FLASH_ClearSchedule();
+						if(FLASH_ClearSchedule() == 0){
+							discountprintf("failed to clear schedule");
+						}
 						nextstate = main;
 						transition = 1;
 						break;
 					case 4:
-						FLASH_ClearLogs();
+						if(FLASH_ClearLogs() == 0){
+							discountprintf("failed to clear logs");
+						}
 						nextstate = main;
 						transition = 1;
 						break;

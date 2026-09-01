@@ -178,8 +178,13 @@ void OledDriverUpdateDisplay(void)
     int page;
     for (page = 0; page < OLED_DRIVER_PAGES; page++) {
 
-        // Set the desired page.
-        I2C_WriteReg(OLED_ADDRESS, COMMAND, 0xB0 | (OLED_DRIVER_PAGES- page));//select page start address
+        // Set the desired page. Pixel data below is walked in reverse (pb
+        // starts at the end of the buffer and decrements), so page order is
+        // intentionally reversed too, for a flipped/rotated display mount.
+        // OLED_DRIVER_PAGES-page (no -1) sent 0xB8 on page 0, which is
+        // outside the SSD1306's valid 0xB0-0xB7 range, and never sent 0xB0
+        // at all - the top display row never got addressed/refreshed.
+        I2C_WriteReg(OLED_ADDRESS, COMMAND, 0xB0 | (OLED_DRIVER_PAGES-1-page));//select page start address
 //        I2C_WriteReg(OLED_ADDRESS, COMMAND, page);
 
         // Set the starting column back to the origin.

@@ -519,6 +519,14 @@ class AmbianceGUI(tk.Tk):
         )
         self.download_log_button.pack(side=tk.LEFT, padx=5)
 
+        # Check status button
+        self.check_status_button = ttk.Button(
+            bottom_button_frame,
+            text="Check Status",
+            command=self.check_status
+        )
+        self.check_status_button.pack(side=tk.LEFT, padx=5)
+
         # Clear output button
         self.clear_button = ttk.Button(
             bottom_button_frame,
@@ -595,6 +603,15 @@ class AmbianceGUI(tk.Tk):
         self.debug_mode = True
         self.connection_retry_count = 0
         self.max_connection_retries = 3
+
+        # Address of whichever discovered device is the current active
+        # connection (or None) - drives the listbox highlight and the
+        # connection-status label so it's always clear which of the
+        # multiple visible speakers commands are actually going to.
+        self.active_device_address = None
+        # Guards against overlapping connect attempts (e.g. double-clicking
+        # Connect) racing each other to set self.ble_client/self.ble_device.
+        self._bt_connect_in_progress = False
 
         # Initialize button states based on connection type
         if self.connection_type.get() == "UART":
@@ -739,7 +756,7 @@ class AmbianceGUI(tk.Tk):
             self.after(0, self._finish_scan)
 
     def _filter_wps_devices(self, devices):
-        """Return only devices that look like our wps speakers."""
+        """Return only devices that look like our Ambiance speakers (currently a no-op passthrough)."""
         filtered = []
         for d in devices:
             filtered.append(d)
@@ -762,10 +779,28 @@ class AmbianceGUI(tk.Tk):
             addr = getattr(device, "address", "??:??:??:??:??:??")
 
             # Show last 5 chars of address so they're easier to tell apart
-            label = f"{name} [{addr[-8:]}]"
+            marker = "● " if addr == self.active_device_address else "  "
+            label = f"{marker}{name} [{addr[-8:]}]"
             self.devices_listbox.insert(tk.END, label)
 
-        self.devices_text_insert(f"[BT] Found {len(devices)} devices during scan", debug=True)
+        self._refresh_device_listbox_highlight()
+        self.devices_text_insert(f"[BT] Found {len(devices)} Ambiance speaker(s) during scan", debug=True)
+
+    def _refresh_device_listbox_highlight(self):
+        """
+        Visually mark whichever entry in the device listbox is the active
+        connection (self.active_device_address), so with multiple speakers
+        visible at once it's always clear which one commands are being
+        sent to. Safe to call any time the listbox or active device changes.
+        """
+        if not hasattr(self, "discovered_devices"):
+            return
+        for i, device in enumerate(self.discovered_devices):
+            addr = getattr(device, "address", None)
+            if self.active_device_address is not None and addr == self.active_device_address:
+                self.devices_listbox.itemconfig(i, background="#d4f7d4", foreground="black")
+            else:
+                self.devices_listbox.itemconfig(i, background="white", foreground="black")
 
 
     def _handle_scan_error(self, error_msg):
@@ -797,15 +832,15 @@ class AmbianceGUI(tk.Tk):
             self.devices_text_insert("[BT] Starting BLE scan...", debug=True)
             devices = await BleakScanner.discover(timeout=self.scan_timeout)
             
-            wps_device = self._filter_wps_devices(devices)
+            ambiance_devices = self._filter_wps_devices(devices)
 
             self.devices_text_insert(
             f"[BT] Found {len(devices)} devices, "
-            f"{len(wps_device)} wps_speaker devices",
+            f"{len(ambiance_devices)} Ambiance speaker devices",
             debug=True
             )
 
-            return wps_device
+            return ambiance_devices
         except Exception as e:
             error_msg = str(e)
             if not error_msg:
@@ -815,50 +850,70 @@ class AmbianceGUI(tk.Tk):
     def connect_to_bluetooth(self):
         """
         Connect to a selected Bluetooth device.
-        
+
         This method initiates the connection process to the selected
         Bluetooth device. It handles the connection process in a separate
         thread to prevent UI freezing.
         """
         if self.connection_type.get() == "Bluetooth":
+            if self._bt_connect_in_progress:
+                self.devices_text_insert("[BT] A connection attempt is already in progress.", debug=True)
+                return
+
             selection = self.devices_listbox.curselection()
             if not selection:
                 self.devices_text_insert("[BT][ERROR] No Bluetooth device selected.")
                 return
 
             index = selection[0]
+            if not hasattr(self, "discovered_devices") or index >= len(self.discovered_devices):
+                self.devices_text_insert("[BT][ERROR] Device list is out of date, please rescan and select again.")
+                return
+
+            # Resolve to a stable device address right now, synchronously,
+            # instead of handing the background thread a listbox index - a
+            # rescan landing before that thread runs could otherwise make
+            # the index point at a different (or no longer existing) device.
+            device_address = self.discovered_devices[index].address
             selected_device_name = self.devices_listbox.get(index)
             self.devices_text_insert(f"[BT] Attempting to connect to {selected_device_name}...", debug=True)
 
-            # Disable connect button
+            # Disable connect button and guard against overlapping attempts
+            self._bt_connect_in_progress = True
             self.bluetooth_connect_button.config(state=tk.DISABLED)
 
             # Start connection in a separate thread
-            threading.Thread(target=self._run_bluetooth_connection, args=(index,), daemon=True).start()
+            threading.Thread(target=self._run_bluetooth_connection, args=(device_address,), daemon=True).start()
 
-    def _run_bluetooth_connection(self, device_index):
+    def _run_bluetooth_connection(self, device_address):
         """
         Run the Bluetooth connection process in a separate thread.
-        
+
         Args:
-            device_name (str): Name of the Bluetooth device to connect to
+            device_address (str): Bluetooth address of the device to connect to
         """
         try:
-            self.run_async(self.async_connect_to_bluetooth(device_index))
+            self.run_async(self.async_connect_to_bluetooth(device_address))
         except Exception as e:
             error_msg = str(e)  # Capture the error message
             self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] Connection failed: {error_msg}"))
             self.after(0, lambda: self.update_connection_status(False, error_message="Connection failed"))
         finally:
             # Re-enable connect button
+            self._bt_connect_in_progress = False
             self.after(0, lambda: self.bluetooth_connect_button.config(state=tk.NORMAL))
 
-    async def async_connect_to_bluetooth(self, device_index: int):
+    async def async_connect_to_bluetooth(self, device_address: str):
         """
         Asynchronous Bluetooth connection logic.
 
         Args:
-            device_index (int): Index of the selected device in self.discovered_devices
+            device_address (str): Bluetooth address of the device to connect
+                to. Resolved against self.discovered_devices at call time
+                (not the listbox selection captured at click time), so a
+                rescan landing in between can't connect to the wrong
+                physical device - it either finds the same device again by
+                address or reports it's no longer in range.
         """
         try:
             # Ensure we have a list of discovered devices
@@ -872,9 +927,6 @@ class AmbianceGUI(tk.Tk):
                 )
                 devices = await BleakScanner.discover(timeout=self.scan_timeout)
 
-                # If you are filtering to wps_speaker devices, do it here:
-                # devices = self._filter_wps_devices(devices)
-
                 self.discovered_devices = devices
                 self.after(
                     0,
@@ -884,28 +936,42 @@ class AmbianceGUI(tk.Tk):
                     ),
                 )
 
-            # Validate the index
-            if (
-                device_index is None
-                or device_index < 0
-                or device_index >= len(self.discovered_devices)
-            ):
+            # Resolve the address against the current device list.
+            device = next(
+                (d for d in self.discovered_devices if getattr(d, "address", None) == device_address),
+                None,
+            )
+
+            if device is None:
                 self.after(
                     0,
                     lambda: self.devices_text_insert(
-                        f"[BT][ERROR] Selected device index {device_index} is out of range."
+                        f"[BT][ERROR] Device {device_address} is no longer in range; please rescan."
                     ),
                 )
                 self.after(
                     0,
                     lambda: self.update_connection_status(
-                        False, error_message="Device index out of range"
+                        False, error_message="Device not found"
                     ),
                 )
                 return
 
-            # Pick the actual BleakDevice object by index
-            device = self.discovered_devices[device_index]
+            # If we're already holding a connection to a (different) device,
+            # tear it down first instead of silently orphaning it. Only one
+            # BLE connection is meant to be active at a time, so switching
+            # which speaker is selected should always leave exactly the new
+            # one connected, not both (one leaked, unreachable).
+            if self.ble_client is not None:
+                self.after(
+                    0,
+                    lambda: self.devices_text_insert(
+                        "[BT] Disconnecting from the previous device first...",
+                        debug=True,
+                    ),
+                )
+                await self._cleanup_connection()
+
             self.ble_device = device
 
             name = device.name or "Unknown"
@@ -968,7 +1034,9 @@ class AmbianceGUI(tk.Tk):
             # Connection successful
             self.device_connected = True
             self.connection_retry_count = 0  # Reset retry count on successful connection
-            self.after(0, lambda: self.update_connection_status(True, "Bluetooth"))
+            self.active_device_address = addr
+            self.after(0, lambda: self.update_connection_status(True, "Bluetooth", device_label=label))
+            self.after(0, self._refresh_device_listbox_highlight)
             self.after(
                 0,
                 lambda: self.devices_text_insert(
@@ -1042,6 +1110,8 @@ class AmbianceGUI(tk.Tk):
             finally:
                 self.ble_client = None
                 self.device_connected = False
+                self.active_device_address = None
+                self.after(0, self._refresh_device_listbox_highlight)
 
     def _run_bluetooth_send(self, data_bytes):
         """
@@ -1195,7 +1265,13 @@ class AmbianceGUI(tk.Tk):
         """Attempt to reconnect to the Bluetooth device."""
         if self.ble_device and not self.device_connected:
             self.devices_text_insert("[BT] Attempting to reconnect...", debug=True)
-            threading.Thread(target=self._run_bluetooth_connection, args=(self.ble_device.name,), daemon=True).start()
+            # _run_bluetooth_connection/async_connect_to_bluetooth take a
+            # device *address* (str), not a name - this used to pass
+            # self.ble_device.name, which raised TypeError the moment
+            # async_connect_to_bluetooth compared it against an int and got
+            # silently swallowed by the caller's broad except, so automatic
+            # reconnect never actually worked.
+            threading.Thread(target=self._run_bluetooth_connection, args=(self.ble_device.address,), daemon=True).start()
 
     def uart_button_toggled(self):
         """
@@ -1311,6 +1387,18 @@ class AmbianceGUI(tk.Tk):
             self.devices_text_insert("Error: No device connected.")
             return
 
+        # Ask where to save before contacting the device, same as Export Schedules.
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = filedialog.asksaveasfilename(
+            title="Save Log As",
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt")],
+            initialfile=f"log_{timestamp}.txt"
+        )
+        if not file_path:
+            self.devices_text_insert("Download canceled by user.")
+            return
+
         self.devices_text_insert("Requesting log download...")
 
         if self.connection_type.get() == "UART" and self.serial_conn:
@@ -1326,8 +1414,9 @@ class AmbianceGUI(tk.Tk):
                     self.devices_text_insert("[UART][ERROR] Failed to receive log size.")
                     return
 
-                size = (high[0] << 8) | low[0]
-                self.devices_text_insert(f"[UART][RX] Log size received: {size} bytes", debug=True)
+                entry_count = (high[0] << 8) | low[0]
+                size = entry_count * self.LOG_ENTRY_SIZE
+                self.devices_text_insert(f"[UART][RX] Log size received: {entry_count} entries ({size} bytes)", debug=True)
 
                 received_data = b""
                 while len(received_data) < size:
@@ -1337,8 +1426,8 @@ class AmbianceGUI(tk.Tk):
                     received_data += chunk
                     self.devices_text_insert(f"[UART][RX] Received {len(received_data)} / {size} bytes...", debug=True)
 
-                log_text = received_data.decode(errors="replace")
-                self.preview_and_save_log(log_text)
+                log_text = self.format_log_entries(received_data)
+                self.save_log(log_text, file_path)
 
             except Exception as e:
                 self.devices_text_insert(f"[UART][ERROR] during log download: {e}", debug=True)
@@ -1346,41 +1435,61 @@ class AmbianceGUI(tk.Tk):
         elif self.connection_type.get() == "Bluetooth" and self.device_connected:
             try:
                 # Bluetooth Download Logic
-                self.devices_text_insert("[BT][TX] Sending log request command: 0x02", debug=True)
-                self.send_over_bluetooth(bytes([0x02]))
-
-                # Wait for device to send size (2 bytes) over BLE
                 async def ble_download():
                     if self.ble_client and self.ble_client.is_connected:
-                        # Read size bytes
+                        # Send the request command directly here - do NOT route
+                        # this through send_over_bluetooth()/bluetooth_send(). That
+                        # helper runs its own independent read/ack polling loop on
+                        # these same characteristics in a separate task, and it
+                        # will race with (and consume bytes meant for) the reads
+                        # below instead of leaving them for this exchange.
+                        self.devices_text_insert("[BT][TX] Sending log request command: 0x02", debug=True)
+                        await self.ble_client.write_gatt_char(self.ble_rx_uuid, bytes([0x02]))
+
+                        # Protocol: a byte only lands in the TX characteristic in
+                        # response to a write on REQ_TX. Every read below must be
+                        # preceded by exactly one REQ_TX write requesting it -
+                        # reading first (the old bug) just returns whatever stale
+                        # value the characteristic last held.
+                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request high byte
                         high = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
-                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # Acknowledge high byte
+                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request low byte
                         low = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
-                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # Acknowledge low byte
 
                         if not high or not low:
                             self.devices_text_insert("[BT][ERROR] Failed to receive log size.")
                             return
 
-                        size = (high[0] << 8) | low[0]
-                        self.devices_text_insert(f"[BT][RX] Log size received: {size} bytes", debug=True)
+                        entry_count = (high[0] << 8) | low[0]
+                        size = entry_count * self.LOG_ENTRY_SIZE
+                        self.devices_text_insert(f"[BT][RX] Log size received: {entry_count} entries ({size} bytes)", debug=True)
 
                         received_data = b""
+                        if size > 0:
+                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request first data byte
                         while len(received_data) < size:
                             chunk = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
                             if not chunk:
                                 break
                             received_data += chunk
-                            # Acknowledge each chunk received
-                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
                             self.devices_text_insert(f"[BT][RX] Received {len(received_data)} / {size} bytes...", debug=True)
+                            if len(received_data) < size:
+                                await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request next byte
 
-                        log_text = received_data.decode(errors="replace")
-                        self.preview_and_save_log(log_text)
+                        log_text = self.format_log_entries(received_data)
+                        self.after(0, lambda: self.save_log(log_text, file_path))
                     else:
                         self.devices_text_insert("[BT][ERROR] No BLE connection active.")
 
-                threading.Thread(target=lambda: asyncio.run(ble_download())).start()
+                def _run_log_download():
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(ble_download(), self.loop)
+                        future.result()  # no short timeout: log downloads can take a while
+                    except Exception as e:
+                        error_msg = str(e)
+                        self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] during log download: {error_msg}", debug=True))
+
+                threading.Thread(target=_run_log_download, daemon=True).start()
 
             except Exception as e:
                 self.devices_text_insert(f"[BT][ERROR] during log download: {e}", debug=True)
@@ -1388,27 +1497,135 @@ class AmbianceGUI(tk.Tk):
         else:
             self.devices_text_insert("Error: Log download only supported over UART or Bluetooth.")
 
-    def preview_and_save_log(self, log_text):
-        """Helper to preview and save downloaded log."""
+    STATUS_LABELS = {
+        0: "Not broadcasting (device not responding / not initialized)",
+        1: "Broadcasting",
+        2: "Programmed silence",
+    }
+
+    def check_status(self):
+        """Query whether the speaker is currently broadcasting, programmed-silent, or dead."""
+        if not self.ensure_device_connected():
+            self.devices_text_insert("Error: No device connected.")
+            return
+
+        self.devices_text_insert("Requesting status...")
+
+        if self.connection_type.get() == "UART" and self.serial_conn:
+            try:
+                self.devices_text_insert("[UART][TX] Sending status request command: 0x06", debug=True)
+                self.serial_conn.write(bytes([0x06]))
+
+                reply = self.serial_conn.read(3)
+                if len(reply) < 3:
+                    self.devices_text_insert("[UART][ERROR] No response to status request.")
+                    return
+
+                self._show_status(reply[0], reply[1], reply[2])
+
+            except Exception as e:
+                self.devices_text_insert(f"[UART][ERROR] during status request: {e}", debug=True)
+
+        elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+            try:
+                self.devices_text_insert("[BT][TX] Sending status request command: 0x06", debug=True)
+
+                async def ble_status():
+                    if not (self.ble_client and self.ble_client.is_connected):
+                        self.devices_text_insert("[BT][ERROR] No BLE connection active.")
+                        return
+
+                    await self.ble_client.write_gatt_char(self.ble_rx_uuid, bytes([0x06]))
+                    await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
+
+                    reply = bytearray()
+                    for _ in range(50):  # up to ~1s at 20ms/poll
+                        await asyncio.sleep(0.02)
+                        chunk = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
+                        if chunk:
+                            reply.extend(chunk)
+                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
+                            if len(reply) >= 3:
+                                break
+
+                    if len(reply) < 3:
+                        self.after(0, lambda: self.devices_text_insert("[BT][ERROR] No response to status request."))
+                    else:
+                        status_byte, folder_byte, track_byte = reply[0], reply[1], reply[2]
+                        self.after(0, lambda: self._show_status(status_byte, folder_byte, track_byte))
+
+                def _run_status_check():
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(ble_status(), self.loop)
+                        future.result(timeout=15)
+                    except Exception as e:
+                        error_msg = str(e)
+                        self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] during status request: {error_msg}", debug=True))
+
+                threading.Thread(target=_run_status_check, daemon=True).start()
+
+            except Exception as e:
+                self.devices_text_insert(f"[BT][ERROR] during status request: {e}", debug=True)
+
+        else:
+            self.devices_text_insert("Error: Status check only supported over UART or Bluetooth.")
+
+    def _show_status(self, status_byte, folder, track):
+        """Display the decoded status/folder/track reply from check_status()."""
+        label = self.STATUS_LABELS.get(status_byte, f"Unknown status byte: {status_byte}")
+
+        if status_byte == 1:
+            text = f"{label}  (Folder {folder} Track {track})"
+        elif status_byte == 2:
+            text = f"{label}  (last played Folder {folder} Track {track})"
+        else:
+            text = label
+
+        self.devices_text_insert(f"Speaker status: {text}")
+
+    LOG_ENTRY_SIZE = 7  # month, daystart, start, daystop, stop, folder, track
+    LOG_BUCKET_HOURS = 2  # must match LOGBUCKETHOURS in Scheduler.c
+
+    def format_log_entries(self, data):
+        """
+        Decode raw log bytes from the device into a human-readable log.
+
+        Each entry covers one LOG_BUCKET_HOURS-wide window of a calendar day:
+        month, daystart, start, daystop, stop, folder, track. `start` is which
+        bucket this entry covers (0 = 00:00, 1 = 02:00, ...). `stop` is 1 if
+        the speaker broadcast at least once during that window, 0 if it was
+        silent the whole window ("dead"). `folder`/`track` are the last track
+        played in that window (0 if it never played). `daystop` is unused.
+        """
+        lines = []
+        entry_count = len(data) // self.LOG_ENTRY_SIZE
+        for i in range(entry_count):
+            offset = i * self.LOG_ENTRY_SIZE
+            month, daystart, bucket, daystop, played, folder, track = data[offset:offset + self.LOG_ENTRY_SIZE]
+
+            bucket_start_hour = (bucket * self.LOG_BUCKET_HOURS) % 24
+            bucket_end_hour = bucket_start_hour + self.LOG_BUCKET_HOURS
+            window = f"{bucket_start_hour:02d}:00-{bucket_end_hour:02d}:00"
+
+            if played:
+                lines.append(f"Month {month:02d} Day {daystart:02d} {window}: Broadcast  (last played Folder {folder} Track {track})")
+            else:
+                lines.append(f"Month {month:02d} Day {daystart:02d} {window}: No broadcast")
+
+        leftover = len(data) % self.LOG_ENTRY_SIZE
+        if leftover:
+            lines.append(f"[WARNING] {leftover} trailing byte(s) did not form a complete log entry")
+
+        return "\n".join(lines) if lines else "(no log entries)"
+
+    def save_log(self, log_text, file_path):
+        """Preview the downloaded log and write it to the path chosen at the start of download_log()."""
         preview = log_text[:300] + ("..." if len(log_text) > 300 else "")
         self.devices_text_insert("Log Preview:\n" + preview)
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_filename = f"log_{timestamp}.txt"
-
-        file_path = filedialog.asksaveasfilename(
-            title="Save Log As",
-            defaultextension=".txt",
-            filetypes=[("Text Files", "*.txt")],
-            initialfile=default_filename
-        )
-
-        if file_path:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(log_text)
-            self.devices_text_insert(f"Log saved to {file_path}")
-        else:
-            self.devices_text_insert("Save canceled by user.")
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(log_text)
+        self.devices_text_insert(f"Log saved to {file_path}")
 
     def add_schedule_entry(self):
         """Validate and add a schedule entry to the queue (but don't send it)."""
@@ -1837,7 +2054,7 @@ class AmbianceGUI(tk.Tk):
         """Fallback cleanup if on_closing wasn't called."""
         self.cleanup_resources()
 
-    def update_connection_status(self, connected, connection_type=None, error_message=None):
+    def update_connection_status(self, connected, connection_type=None, error_message=None, device_label=None):
         """
         Update the connection status display and control button states.
         
@@ -1845,6 +2062,9 @@ class AmbianceGUI(tk.Tk):
             connected (bool): Whether the device is connected
             connection_type (str, optional): Type of connection (Bluetooth/UART)
             error_message (str, optional): Error message to display if disconnected
+            device_label (str, optional): Name/address of the active device, shown
+                so it's clear which of the (possibly several) visible speakers
+                commands are actually being sent to
         """
         try:
             # Check if window is still valid
@@ -1857,7 +2077,9 @@ class AmbianceGUI(tk.Tk):
             if connected:
                 # Update UI for connected state
                 status_color = "green"
-                if connection_type:
+                if connection_type and device_label:
+                    status_text = f"● Connected via {connection_type} \u2014 {device_label}"
+                elif connection_type:
                     status_text = f"● Connected via {connection_type}"
                 else:
                     status_text = "● Connected"
@@ -2128,6 +2350,9 @@ class AmbianceGUI(tk.Tk):
                 self.run_async(self._cleanup_connection())
             
             self.device_connected = False
+            self.ble_device = None
+            self.active_device_address = None
+            self._refresh_device_listbox_highlight()
             self.update_connection_status(False, error_message="Disconnected")
             
             # Update button states

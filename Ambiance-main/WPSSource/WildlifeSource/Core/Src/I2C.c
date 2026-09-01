@@ -72,7 +72,12 @@ HAL_StatusTypeDef I2C_Enqueue(MemAdd_t Post){
 		HAL_StatusTypeDef status = HAL_OK;
 
 		uint32_t start = TIMERS_GetMilliSeconds();
-		while((MemBuff.tail == ((MemBuff.head+1)%CIRCBUFFERSIZE)) && (((start + I2CBUFFERTIMEOUT) > TIMERS_GetMilliSeconds())));
+		/* rollover-safe: TIMERS_GetMilliSeconds() wraps every ~49.7 days;
+		 * "start + I2CBUFFERTIMEOUT > now" breaks right at that wrap and can
+		 * bail out of the wait immediately. (uint32_t)(now - start) wraps
+		 * correctly the same way the rest of this codebase already does it
+		 * (see Scheduler.c/MP3.c). */
+		while((MemBuff.tail == ((MemBuff.head+1)%CIRCBUFFERSIZE)) && ((uint32_t)(TIMERS_GetMilliSeconds() - start) < I2CBUFFERTIMEOUT));
 		if(MemBuff.tail == (MemBuff.head+1)%CIRCBUFFERSIZE){
 			BSP_LED_On(LED_RED);//indicate a fatal buffer overflow
 			return HAL_ERROR;

@@ -50,8 +50,8 @@
 /**
  * Define Advertising parameters
  */
-#define CFG_PUBLIC_BD_ADDRESS               (0x0008E12A1234)
-#define CFG_BD_ADDRESS_TYPE                 HCI_ADDR_PUBLIC
+#define CFG_PUBLIC_BD_ADDRESS               (0x0008E12A1234)  /* unused: kept for reference now that CFG_BD_ADDRESS_TYPE is static random */
+#define CFG_BD_ADDRESS_TYPE                 HCI_ADDR_STATIC_RANDOM_ADDR  /* was HCI_ADDR_PUBLIC; that made every unit share the SAME BLE address, so scanners (bleak/CoreBluetooth/etc) deduped them into one entry. Static random gives each chip a unique factory-provisioned address. */
 #define CFG_BLE_PRIVACY_ENABLED             (0)
 
 #define ADV_INTERVAL_MIN                    (0x0080)

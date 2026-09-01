@@ -153,15 +153,27 @@ static BleApplicationContext_t bleAppContext;
 
 USART_APP_ConnHandleNotEvt_t USARTHandleNotification;
 
-static const char a_GapDeviceName[] = {  'W', 'i', 'l', 'd', 'l', 'i', 'f', 'e', ' ', 'P', 'l', 'a', 'y', 'b', 'a', 'c', 'k', ' ', 'S', 'p', 'e', 'a', 'k', 'e', 'r' }; /* Gap Device Name */
+/* Device name is now built at runtime as "Ambiance Speaker XXXX", where XXXX
+ * is a 4-hex-digit tag derived from this chip's factory-programmed 64-bit
+ * unique ID (see BLE_BuildDeviceName()). Every unit previously advertised
+ * the same fixed name AND the same fixed BD address (CFG_PUBLIC_BD_ADDRESS in
+ * app_conf.h), so BLE scanners deduplicated multiple nearby speakers into a
+ * single entry. The address fix (switch to HCI_ADDR_STATIC_RANDOM_ADDR) makes
+ * each unit discoverable as a distinct device; this name suffix makes them
+ * distinguishable at a glance in the GUI's device list too. */
+#define GAP_DEVICE_NAME_PREFIX   "Ambiance Speaker "
+#define GAP_DEVICE_NAME_ID_LEN   4U   /* hex chars appended from the unique chip ID */
+#define GAP_DEVICE_NAME_LEN      (sizeof(GAP_DEVICE_NAME_PREFIX) - 1U + GAP_DEVICE_NAME_ID_LEN)
+
+static uint8_t a_GapDeviceName[GAP_DEVICE_NAME_LEN]; /* Gap Device Name, filled in by BLE_BuildDeviceName() */
 
 /**
  * Advertising Data
  */
-uint8_t a_AdvData[] =
+uint8_t a_AdvData[3U + 2U + GAP_DEVICE_NAME_LEN] =
 {
   2, AD_TYPE_FLAGS, FLAG_BIT_LE_GENERAL_DISCOVERABLE_MODE|FLAG_BIT_BR_EDR_NOT_SUPPORTED,
-  12, AD_TYPE_COMPLETE_LOCAL_NAME, 'W', 'P', 'S', '_', 's', 'p', 'e', 'a', 'k', 'e', 'r',  /* Complete name */
+  1 + GAP_DEVICE_NAME_LEN, AD_TYPE_COMPLETE_LOCAL_NAME,  /* name bytes filled in by BLE_BuildDeviceName() */
 };
 
 /* USER CODE BEGIN PV */
@@ -206,6 +218,32 @@ void ModulesInit(void)
   }
 }
 
+/**
+ * Build a per-unit device name ("Ambiance Speaker XXXX") from the chip's
+ * factory-programmed 64-bit unique ID (UID64_BASE), and copy it into both
+ * the GAP device name characteristic buffer and the advertising data buffer.
+ * Must run before Gap_profile_set_dev_name() and before advertising starts.
+ */
+static void BLE_BuildDeviceName(void)
+{
+  static const char hex_digits[] = "0123456789ABCDEF";
+  const uint32_t uid0 = *(volatile uint32_t *)(UID64_BASE);
+  const uint32_t uid1 = *(volatile uint32_t *)(UID64_BASE + 4U);
+  /* Fold the 64-bit factory UID down to a 16-bit tag - unique enough to
+   * tell nearby units apart in a scan list without needing the full ID. */
+  const uint16_t id_tag = (uint16_t)(((uid0 * 2654435761U) ^ (uid1 * 2246822519U)) >> 16);
+  const size_t prefix_len = sizeof(GAP_DEVICE_NAME_PREFIX) - 1U;
+
+  memcpy(a_GapDeviceName, GAP_DEVICE_NAME_PREFIX, prefix_len);
+  a_GapDeviceName[prefix_len + 0U] = (uint8_t)hex_digits[(id_tag >> 12) & 0xFU];
+  a_GapDeviceName[prefix_len + 1U] = (uint8_t)hex_digits[(id_tag >> 8)  & 0xFU];
+  a_GapDeviceName[prefix_len + 2U] = (uint8_t)hex_digits[(id_tag >> 4)  & 0xFU];
+  a_GapDeviceName[prefix_len + 3U] = (uint8_t)hex_digits[id_tag & 0xFU];
+
+  /* a_AdvData layout: [0..2]=flags block, [3]=len, [4]=AD_TYPE_COMPLETE_LOCAL_NAME, [5..]=name */
+  memcpy(&a_AdvData[5], a_GapDeviceName, GAP_DEVICE_NAME_LEN);
+}
+
 void BLE_Init(void)
 {
   uint8_t role;
@@ -218,6 +256,8 @@ void BLE_Init(void)
   uint8_t bd_address[6] = {0};
   uint8_t bd_address_len= 6;
   uint16_t appearance = CFG_GAP_APPEARANCE;
+
+  BLE_BuildDeviceName();
 
   BLE_STACK_InitTypeDef BLE_STACK_InitParams = {
     .BLEStartRamAddress = (uint8_t*)dyn_alloc_a,
@@ -333,6 +373,14 @@ void BLE_Init(void)
                              &gap_dev_name_char_handle,
                              &gap_appearance_char_handle,
                              &gap_periph_pref_conn_param_char_handle);
+  if (ret != BLE_STATUS_SUCCESS)
+  {
+    APP_DBG_MSG("  Fail   : aci_gap_profile_init command, result: 0x%02X\n", ret);
+  }
+  else
+  {
+    APP_DBG_MSG("  Success: aci_gap_profile_init command\n");
+  }
 
 #if (CFG_BD_ADDRESS_TYPE == HCI_ADDR_STATIC_RANDOM_ADDR)
   ret = aci_hal_read_config_data(CONFIG_DATA_STORED_STATIC_RANDOM_ADDRESS,
