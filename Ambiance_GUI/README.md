@@ -188,7 +188,9 @@ python Ambiance_GUI.py
 
 ---
 
-## Author
+## Authors
 **Jaspreet Singh**  
+**Simon Nakarmi**
 Developer of the Wildlife Audio Player GUI  
 [https://github.com/jsingh08](https://github.com/jsingh08)
+[https://github.com/simonnkm](https://github.com/simonnkm)

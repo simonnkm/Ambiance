@@ -8,16 +8,17 @@ The project includes embedded firmware, a desktop GUI, hardware documentation, P
 
 ```text
 Ambiance/
-├── Ambiance-main/      Embedded STM32 firmware and device-side code
-├── Ambiance_GUI/       Desktop GUI for UART/Bluetooth control
-├── dist/               Packaged application output
+├── Ambiance-main/        Embedded STM32 firmware and device-side code
+├── Ambiance_GUI/         Desktop GUI for UART/Bluetooth control
+├── Assembly Materials/   PCB manufacturing and assembly files
+└── dist/                 Packaged application output
 ```
 
 ## Main Components
 
 ### Embedded Firmware
 
-The embedded firmware runs on the STM32 Nucleo board. It controls scheduled audio playback, button input, OLED menu navigation, Bluetooth/UART communication, real-time clock behavior, and DFPlayer Mini track playback.
+The embedded firmware runs on the STM32 Nucleo board. It controls scheduled audio playback, button input, OLED menu navigation, Bluetooth/UART communication, real-time clock behavior, device logging, device status reporting, schedule storage, and DFPlayer Mini track playback.
 
 ### Desktop GUI
 
@@ -29,13 +30,33 @@ Ambiance_GUI/
 
 The GUI connects to the device through UART or Bluetooth and provides controls for:
 
-* Device connection
-* Volume
-* Duty cycle
-* Manual track selection
-* Schedule creation
-* Schedule import/export
-* Log download
+- Device connection
+- Volume
+- Duty cycle
+- Manual track selection
+- Schedule creation
+- Schedule import/export
+- Sending schedules to the device
+- Clearing the local schedule queue
+- Clearing the schedule stored on the device
+- Downloading device logs
+- Clearing device logs
+- Checking device status
+- Checking device time
+- RTC time synchronization and diagnostic testing
+
+The device status request reports whether the device is currently:
+
+- Playing audio
+- Off
+- In a programmed silence period
+
+The GUI also includes RTC-related controls for testing and diagnostics:
+
+- Automatic time synchronization when connecting
+- Force Time Sync
+- Skip automatic time sync on the next connection
+- Check Device Time
 
 See:
 
@@ -43,9 +64,17 @@ See:
 Ambiance_GUI/README.md
 ```
 
+for GUI installation, usage, and packaging instructions.
+
 ### Hardware and Assembly
 
 The hardware and assembly instructions are provided separately as a Word document. That document includes the physical build steps, wiring, DFPlayer Mini file setup, FAT drive sorting behavior, bill of materials, Gerber files, and assembly notes.
+
+Additional manufacturing and assembly files are located in:
+
+```text
+Assembly Materials/
+```
 
 ## OLED Screen Options
 
@@ -59,8 +88,8 @@ Used to immediately play a specific audio track from a selected folder.
 
 The user selects:
 
-* Folder number
-* File number
+- Folder number
+- File number
 
 The device then sends the selected track command to the DFPlayer Mini.
 
@@ -70,13 +99,13 @@ Used to create scheduled playback entries directly on the device.
 
 A schedule includes:
 
-* Month
-* Start day
-* End day
-* Start time
-* Stop time
-* Folder number
-* File number
+- Month
+- Start day
+- End day
+- Start time
+- Stop time
+- Folder number
+- File number
 
 A month value of `0` means the schedule repeats every month.
 
@@ -92,14 +121,51 @@ Used for device-level controls and maintenance options.
 
 This menu includes:
 
-* Duty cycle adjustment
-* Next track
-* Previous track
-* Clear schedule
+- Duty cycle adjustment
+- Next track
+- Previous track
+- Clear schedule
 
 ### Volume Control
 
 The left and right buttons adjust the speaker volume.
+
+## Device Requests and Diagnostics
+
+The GUI can send diagnostic and maintenance requests directly to the connected device.
+
+### Device Status
+
+The GUI can request the device's current operating state.
+
+The returned status indicates whether the device is:
+
+- Playing audio
+- Off
+- In a programmed silence period
+
+### Device Logs
+
+The GUI supports:
+
+- Downloading logs stored on the device
+- Saving downloaded logs
+- Clearing logs stored on the device
+
+### Device Schedule
+
+The GUI can clear the schedule currently stored on the device without requiring direct interaction with the OLED menu.
+
+### RTC and Time Synchronization
+
+The GUI provides controls for synchronizing and evaluating the device's real-time clock:
+
+- Automatic time synchronization when connecting
+- Force Time Sync
+- Skip automatic time sync on the next connection for diagnostic testing
+- Check Device Time
+
+These controls can be used to test RTC synchronization and verify the time currently maintained by the device.
 
 ## DFPlayer Mini File Numbering
 
@@ -130,7 +196,8 @@ Example SD card layout:
 ```
 
 Folder numbers are used by the firmware and GUI when selecting tracks. File numbers are used to choose the specific audio file inside that folder.
-Avoid folder 4 track 7, it is not going to play. A placeholder should be fine.
+
+Avoid folder 4, track 7, as this combination does not play correctly. A placeholder file can be used instead.
 
 ## DFPlayer Mini FAT Drive Sorting
 
@@ -150,11 +217,12 @@ Incorrect file ordering can cause the DFPlayer Mini to play the wrong track numb
 
 The hardware package includes:
 
-* Gerber files
-* Bill of materials
-* PCB assembly notes
-* Hardware and assembly instructions
-* DFPlayer Mini SD card setup instructions
+- Gerber files
+- Bill of materials
+- PCB assembly notes
+- Hardware and assembly instructions
+- DFPlayer Mini SD card setup instructions
+- 3D-printable bracket files
 
 ## Firmware Setup
 
