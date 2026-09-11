@@ -1,0 +1,63 @@
+Ambiance - changes since ambiance_changes_latest.zip
+(that zip covered: Scheduler.h, Scheduler.c, main.c, Ambiance_GUI.py,
+ up through the boot-marker / reset-cause work)
+
+UNCHANGED since that zip:
+- main.c
+- Scheduler.h
+
+Scheduler.c
+- Added a guard so CompareTime() returns early when day/month read as 0
+  (the RTC's power-on default), which stops bogus "Month 00 Day 00" log
+  entries from ever being written.
+- Removed an unnecessary `curschedule != -1` gate on the broadcast check,
+  which was the actual cause of genuine active playback sometimes being
+  logged as "unresponsive" instead of "Broadcast."
+- (A temporary RTC debug print was added mid-session to diagnose a
+  logging-stall report, then fully removed again after it turned out to
+  corrupt in-flight log downloads by writing into the same BLE stream.
+  Net effect on this file is just the two fixes above.)
+
+FLASH.c / FLASH.h
+- New: FLASH_ClearLogs() - erases the log flash region and resets
+  LogsSize, backing the new Clear Device Log button.
+- (It briefly ended up defined twice from an editing slip, which broke
+  the build; the duplicate was found and removed.)
+
+COMM.c
+- New protocol command CLEARLOGS (0x08) - invokes FLASH_ClearLogs() and
+  replies with a success byte, mirroring the existing Clear Device
+  Schedule flow.
+- New protocol command TIMEREQUEST (0x10) - read-only diagnostic that
+  replies with the device's current month/day/hour/minute, added to
+  confirm the RTC's live state without racing an in-progress transfer.
+
+usart.c / usart_app.c
+- BLE transfer size widened from 1 byte to 20 bytes per exchange for
+  speed, with the variable-length GATT flag and chunked read/write
+  handling updated to match.
+
+app_ble.c (new file touched this round)
+- Per-unit BLE device name tag widened from 4 hex digits (16 bits) to 6
+  hex digits (24 bits), after two physical units were confirmed to have
+  collided on the same 4-digit tag. The first 4 digits are deliberately
+  preserved so old and new names overlap predictably.
+
+Ambiance_GUI.py
+- Added Clear Device Schedule and Clear Device Log buttons.
+- Added a Check Time button plus a "skip auto time sync" diagnostic
+  checkbox, to query/confirm the device's RTC state directly.
+- Added a BLE operation lock, fixing real concurrency-caused disconnects
+  from overlapping BLE operations.
+- Fixed several Python closure/late-binding bugs that were producing
+  misleading (but not data-affecting) debug console output.
+- Fixed a log-download truncation bug that the BLE transfer-size increase
+  had introduced.
+- Log filenames now include the date and device name.
+- Layout reworked: Scan for Devices / Connect / Disconnect consolidated
+  onto one row; Force Time Sync (and the skip-auto-sync checkbox) moved
+  next to the connection controls; the Clear Output button removed;
+  log/status buttons rearranged two-per-row (Download Device Log / Clear
+  Device Log, then Check Device Status / Check Device Time); and the
+  volume and duty-cycle sliders widened so exact values like 20, 30, 70
+  are reliably clickable.

@@ -118,19 +118,40 @@ void USART_Notification(USART_NotificationEvt_t *p_Notification)
 
     case USART_REQ_TX_WRITE_EVT:
       /* USER CODE BEGIN Service1Char3_WRITE_EVT */
-        int16_t data = BLUETOOTH_ReadBuffer();
-        if(data != -1){
-        	uint8_t data1 = (uint8_t)data;
-			USART_Data_t value1 = {&data1, 1};
-			USART_UpdateValue(USART_TX, &value1);
-			uint8_t data2 = 0;
-			USART_Data_t value2 = {&data2, 1};
-			USART_UpdateValue(USART_REQ_TX, &value2);
-        } else {
-
-			uint8_t data2 = 2;
-			USART_Data_t value2 = {&data2, 1};
-			USART_UpdateValue(USART_REQ_TX, &value2);
+        /* Drain up to TX_CHUNK_MAX bytes per request instead of exactly one -
+         * BLUETOOTH_ReadBuffer() already accumulates a batch (e.g. a whole
+         * logsdata send) into its ring buffer well before the GUI asks for
+         * any of it, so there's no reason to hand it back one byte at a
+         * time. Sized to match usart.c's TX characteristic (TX_SIZE); kept
+         * as its own local constant here rather than including usart.h's
+         * private TX_SIZE define. Semantics are otherwise unchanged: req=0
+         * means "data ready, ask again", req=2 means "buffer was empty,
+         * nothing to send right now" - callers (bluetooth_send/log
+         * download/status) already read whatever length comes back instead
+         * of assuming exactly one byte, so this is compatible with them
+         * unmodified. */
+        {
+			const uint16_t chunk_max = 20;//must not exceed usart.c's TX_SIZE
+			uint8_t chunk[20];
+			uint16_t chunk_len = 0;
+			while(chunk_len < chunk_max){
+				int16_t data = BLUETOOTH_ReadBuffer();
+				if(data == -1){
+					break;
+				}
+				chunk[chunk_len++] = (uint8_t)data;
+			}
+			if(chunk_len > 0){
+				USART_Data_t value1 = {chunk, chunk_len};
+				USART_UpdateValue(USART_TX, &value1);
+				uint8_t data2 = 0;
+				USART_Data_t value2 = {&data2, 1};
+				USART_UpdateValue(USART_REQ_TX, &value2);
+			} else {
+				uint8_t data2 = 2;
+				USART_Data_t value2 = {&data2, 1};
+				USART_UpdateValue(USART_REQ_TX, &value2);
+			}
         }
 
       /* USER CODE END Service1Char3_WRITE_EVT */

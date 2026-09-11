@@ -16,6 +16,7 @@
 #include "FLASH.h"
 #include "TIMERS.h"
 #include "discountIO.h"
+#include "MP3.h"
 //----------------------------------------Private Defines----------------------------------------
 #define REFRESHRATE (.5/*minutes*/*60000/*milliseconds/minute*/)
 #define NULLDATE    0xFF
@@ -29,36 +30,128 @@ static uint8_t hour;
 static uint8_t minute;
 
 static uint8_t logging;//logging
-static uint8_t playdata;
+static uint16_t playdata;
+
+#define LOGBUCKETHOURS 2//log one broadcast/no-broadcast summary per this many hours
+
+static uint8_t lastLoggedDay = NULLDATE;//day the current log bucket started on, NULLDATE = not yet seen a valid day
+static uint8_t lastLoggedMonth;
+static uint8_t lastLoggedBucket;//which LOGBUCKETHOURS-wide bucket of the day (0..(24/LOGBUCKETHOURS)-1) is currently open
+static uint8_t playedInBucket;//nonzero if at least one play command fired since the current bucket opened
+static uint8_t silentInBucket;//nonzero if MP3 reported PROGRAMMED_SILENCE (alive, idle by design) at least once since the current bucket opened
+static uint8_t lastFolder;//most recent folder/track played in the current bucket, for reference in the summary
+static uint8_t lastTrack;
 
 static int16_t curschedule;//contains the current schedule being followed, -1 if no schedule active
+
+static uint8_t pendingBootResetCause = 0;//RESETCAUSE_* bits from main(), logged once RTC time is valid
+static uint8_t bootLogged = 0;//has this boot's marker been written to the log yet
 //----------------------------------------Private Functions--------------------------------------
 void CompareTime(){
-	if(logging){
-		scheduleEvent event;
+	//Once-per-bucket summary: did the speaker broadcast at all during the bucket that just ended, or was it dead?
+	uint8_t currentBucket = hour / LOGBUCKETHOURS;
 
-		event.month = month;
-		if(playdata){
-			event.start = ((hour & 0b11111) << 3) & ((uint8_t)(minute/15));
-			event.daystart = day;
-			event.stop = 0;
-			event.daystop = 0;
-			event.folder = (playdata>>8)&0xFF;
-			event.track = playdata&0xFF;
-		} else {
-			scheduleEvent prevevent = FLASH_ReadLogs(FLASH_GetLogsSize()-1);
-			event.start = 0;
-			event.daystart = 0;
-			event.stop = ((hour & 0b11111) << 3) & ((uint8_t)(minute/15));
-			event.daystop = day;
-			event.folder = prevevent.folder;
-			event.track = prevevent.track;
+	if(day == 0 || month == 0){
+		//The RTC's own power-on-reset default reads as 0, not the NULLDATE
+		//(0xFF) sentinel below - so before the very first real time sync
+		//after a reset, day/month briefly read as 0 rather than "not yet
+		//valid". That used to get latched as the first valid day, producing
+		//bogus "Month 00 Day 00" log entries until the next sync corrected
+		//things. Wait for an actual date instead.
+		return;
+	}
+
+	if(lastLoggedDay == NULLDATE){
+		//first valid date seen since boot; nothing to summarize yet
+		lastLoggedDay    = day;
+		lastLoggedMonth  = month;
+		lastLoggedBucket = currentBucket;
+
+		if(!bootLogged){
+			//Record that a boot happened, when (now that RTC time is finally
+			//valid), and why (RESETCAUSE_* bits latched at the very start of
+			//main(), before anything else could touch RCC->CSR). Reuses the
+			//scheduleEvent wire format like the bucket summaries below, but
+			//tagged with stop=2 (bucket summaries only ever use 0 or 1) so a
+			//log reader can tell a boot marker apart from a broadcast
+			//summary; folder carries the reset-cause bitmask instead of a
+			//folder number, and start carries the boot time-of-day packed
+			//the same way schedule start/stop times already are elsewhere
+			//in this codebase (hour<<3 | quarter-hour).
+			scheduleEvent bootEvent;
+			bootEvent.month    = month;
+			bootEvent.daystart = day;
+			bootEvent.start    = (uint8_t)((hour<<3) | (minute/15));
+			bootEvent.daystop  = 0;
+			bootEvent.stop     = 2;//boot-marker sentinel
+			bootEvent.folder   = pendingBootResetCause;
+			bootEvent.track    = 0;
+			FLASH_AppendLogs(bootEvent);
+			bootLogged = 1;
 		}
-		FLASH_AppendLogs(event);
+	} else if(day != lastLoggedDay || currentBucket != lastLoggedBucket){
+		scheduleEvent summary;
+		summary.month    = lastLoggedMonth;
+		summary.daystart = lastLoggedDay;
+		summary.start    = lastLoggedBucket;//which bucket this entry covers
+		//1 = broadcast at least once; 3 = never broadcast but MP3 confirmed
+		//alive and idle by design (duty-cycle pause / outside a scheduled
+		//window) at least once - "programmed silence", not a failure; 0 =
+		//neither was ever observed the whole bucket, i.e. MP3 never
+		//reported anything but MP3_STATUS_DEAD - genuinely unresponsive.
+		//(3, not 2: stop==2 is already the boot-marker sentinel above.)
+		summary.stop     = playedInBucket ? 1 : (silentInBucket ? 3 : 0);
+		summary.daystop  = 0;
+		summary.folder   = lastFolder;
+		summary.track    = lastTrack;
+		FLASH_AppendLogs(summary);
+
+		lastLoggedDay    = day;
+		lastLoggedMonth  = month;
+		lastLoggedBucket = currentBucket;
+		playedInBucket   = 0;
+		silentInBucket   = 0;
+		lastFolder       = 0;
+		lastTrack        = 0;
+	}
+
+	if(logging){
+		if(playdata){
+			playedInBucket = 1;
+			lastFolder = (playdata>>8)&0xFF;
+			lastTrack  = playdata&0xFF;
+		}
 		logging  = 0;
 	} else {
 		scheduleEvent event;
 		Event_t play = (Event_t){EVENT_PLAY, 0};
+
+		//Confirm ongoing playback each poll (every REFRESHRATE, ~30s), not just
+		//the bucket where the schedule first started. MP3.c only calls
+		//Scheduler_Event_Post() (which sets playedInBucket via the "logging"
+		//branch above) on the *initial* EVENT_PLAY - its own randomized-
+		//continuation plays after each track finishes (the 0x3D "song
+		//complete" handler) never notify Scheduler. Without this, any
+		//broadcast window longer than one LOGBUCKETHOURS-wide bucket got
+		//logged as "No broadcast" for every bucket after the first one, even
+		//while the speaker was still actively playing - this queries MP3's
+		//own status (already exposed for the GUI's status request) instead
+		//of relying solely on that one-time push notification.
+		{
+			uint8_t mp3status = MP3_GetStatus();
+			if(mp3status == MP3_STATUS_BROADCASTING){
+				playedInBucket = 1;
+				uint16_t curfile = MP3_GetCurrentFile();
+				lastFolder = (uint8_t)(curfile>>8);
+				lastTrack  = (uint8_t)(curfile&0xFF);
+			} else if(mp3status == MP3_STATUS_PROGRAMMED_SILENCE){
+				//MP3 is alive and correctly idle (mid duty-cycle pause, or no
+				//schedule is active right now) - record that this bucket saw
+				//a confirmed-alive device, not a dead/unresponsive one, even
+				//if it never actually played a track.
+				silentInBucket = 1;
+			}
+		}
 
 		//allows for a double check to allow one schedule to end the same minute a second schedule starts
 		//this is done with the manipulation of reset
@@ -167,6 +260,10 @@ void CompareTime(){
 		}
 	}
 }
+void Scheduler_RecordBootResetCause(uint8_t cause){
+	pendingBootResetCause = cause;
+}
+
 uint8_t Scheduler_GetMonth(){
 	I2C_Recieve(RTCADDRESS, RTCMNTHADDR, 1);
 	return month;

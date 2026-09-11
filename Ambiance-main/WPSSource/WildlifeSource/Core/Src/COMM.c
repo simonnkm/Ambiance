@@ -15,6 +15,7 @@
 #include "FLASH.h"
 #include "BLUETOOTH.h"
 #include "I2C.h"
+#include "Scheduler.h"
 
 #include <stdbool.h>
 
@@ -25,6 +26,24 @@
 #define LOGSDONE        0x03
 #define DCCONTROL       0x04
 #define SCHEDULECONTROL 0x05
+#define STATUSREQUEST   0x06
+//0x07 was unused - existing SCHEDULECONTROL (0x05) already clears the whole
+//schedule before accepting new entries, but there was no way to clear it
+//WITHOUT also having to send a (possibly empty) replacement schedule - the
+//schedulemonth state unconditionally appends its in-progress entry on
+//SCHEDULEEND, so a bare SCHEDULECONTROL+SCHEDULEEND with nothing in between
+//would leave one bogus zeroed entry behind instead of a truly empty schedule.
+//CLEARSCHEDULE is a dedicated, standalone clear-only command mirroring what
+//the OLED's own "Clear Schedule" menu item already does directly.
+#define CLEARSCHEDULE   0x07
+#define CLEARLOGS       0x08
+//Read-only diagnostic: returns the firmware's current RTC-derived
+//month/day/hour/minute as a proper request/response (like STATUSREQUEST),
+//instead of an out-of-band debug print that can race with an in-progress
+//transfer (e.g. a log download) and corrupt it. Added specifically to let
+//the GUI confirm whether the device's clock is actually advancing without
+//guessing from log gaps.
+#define TIMEREQUEST     0x10
 #define SCHEDULEEND     0x0D
 #define DEBUGPRINT   	0x0E
 #define SETTIME			0x0F
@@ -43,7 +62,11 @@
 	 folderselected,
 	 logsrequest,
 	 logsdata,
+	 statusrequest,
 	 dccontrol,
+	 clearschedule,
+	 clearlogs,
+	 timerequest,
 	 schedulecontrol,
 	 schedulemonth,
 	 scheduledaystart,
@@ -158,6 +181,23 @@ uint8_t COMM_Event_Handler(Event_t event){
 				next = schedulecontrol;
 				transition = true;
 				break;
+			case CLEARSCHEDULE:
+				next = clearschedule;
+				transition = true;
+				break;
+			case CLEARLOGS:
+				next = clearlogs;
+				transition = true;
+				break;
+			case TIMEREQUEST:
+				next = timerequest;
+				transition = true;
+				break;
+			case STATUSREQUEST:
+				//discountprintf("received status request");
+				next = statusrequest;
+				transition = true;
+				break;
 			case SETTIME:
 				//discountprintf("received set time control");
 				next = timeminute;
@@ -213,15 +253,13 @@ uint8_t COMM_Event_Handler(Event_t event){
 	case logsdata:
 		if(event.status == EVENT_USART_READY){
 			//get logs size
-			uint16_t size  = 32;
-			//uint16_t size = FLASH_GetLogsSize();
+			uint16_t size = FLASH_GetLogsSize();
 			uint16_t sendsize = size - sent;
-			if(size - sent > (uint16_t)(USARTBUFFERSIZE/6)){
-				sendsize = (uint16_t)(USARTBUFFERSIZE/6);
+			if(size - sent > (uint16_t)(USARTBUFFERSIZE/7)){
+				sendsize = (uint16_t)(USARTBUFFERSIZE/7);
 			}
 			for(int i = 0; i < sendsize; i++){
-				//scheduleEvent levent = FLASH_ReadLogs(sent);
-				scheduleEvent levent = {1, 1, 0b1001001, 0b1001010, 1, 1};
+				scheduleEvent levent = FLASH_ReadLogs(sent);
 				USART_WriteTx(levent.month);
 				USART_WriteTx(levent.daystart);
 				USART_WriteTx(levent.start);
@@ -231,7 +269,7 @@ uint8_t COMM_Event_Handler(Event_t event){
 				USART_WriteTx(levent.track);
 				sent++;
 			}
-			if(size - sent <= (uint16_t)(USARTBUFFERSIZE/6)){
+			if(size - sent <= (uint16_t)(USARTBUFFERSIZE/7)){
 				USART_WriteTx(LOGSDONE);
 				if(size >= 255){
 					discountprintf("logs buffer overflowed, most recent data has been lost");
@@ -244,6 +282,16 @@ uint8_t COMM_Event_Handler(Event_t event){
 			}
 		}
 		break;
+	case statusrequest:
+		if(event.status == EVENT_ENTRY){
+			uint16_t curfile = MP3_GetCurrentFile();
+			USART_WriteTx(MP3_GetStatus());
+			USART_WriteTx((uint8_t)(curfile>>8));//folder
+			USART_WriteTx((uint8_t)(curfile&0xFF));//track
+			next = idle;
+			transition = true;
+		}
+		break;
 	case dccontrol:
 		if(event.status == EVENT_USART){
 			if(FLASH_SetDCVol(FLASH_GetVolume(), (uint8_t)event.data) == 0){
@@ -252,6 +300,54 @@ uint8_t COMM_Event_Handler(Event_t event){
 			//sprintf(text, "Storing volume %d", FLASH_GetDutyCycle());
 			//discountprintf(text);
 
+			next = idle;
+			transition = true;
+		}
+		break;
+	case clearschedule:
+		//Standalone clear, mirroring the OLED menu's direct FLASH_ClearSchedule()
+		//call - unlike SCHEDULECONTROL, this never enters a state that expects a
+		//stream of new entries afterward, so there's no risk of a bogus entry
+		//being appended. Replies with one byte (FLASH_ClearSchedule's own
+		//success/fail return value) so the GUI can confirm it actually happened
+		//instead of just assuming the command landed.
+		if(event.status == EVENT_ENTRY){
+			uint8_t result = FLASH_ClearSchedule();
+			if(result == 0){
+				discountprintf("failed to clear schedule");
+			}
+			USART_WriteTx(result);
+			next = idle;
+			transition = true;
+		}
+		break;
+	case clearlogs:
+		//Same pattern as clearschedule, for the log flash region instead.
+		//Doesn't touch Scheduler.c's in-RAM bucket-tracking state - whatever
+		//bucket is currently in progress keeps accumulating normally and
+		//gets appended as the first fresh entry once it closes.
+		if(event.status == EVENT_ENTRY){
+			uint8_t result = FLASH_ClearLogs();
+			if(result == 0){
+				discountprintf("failed to clear logs");
+			}
+			USART_WriteTx(result);
+			next = idle;
+			transition = true;
+		}
+		break;
+	case timerequest:
+		//Replies with 4 bytes: month, day, hour, minute - whatever Scheduler.c
+		//currently has cached from its own periodic RTC polling (same values
+		//the OLED's clock display uses). Doesn't force a fresh I2C read itself;
+		//the cached values are refreshed at least once per REFRESHRATE (~30s)
+		//poll, which is plenty fresh for confirming the clock is alive and
+		//advancing.
+		if(event.status == EVENT_ENTRY){
+			USART_WriteTx(Scheduler_GetMonth());
+			USART_WriteTx(Scheduler_GetDay());
+			USART_WriteTx(Scheduler_GetHour());
+			USART_WriteTx(Scheduler_GetMinute());
 			next = idle;
 			transition = true;
 		}

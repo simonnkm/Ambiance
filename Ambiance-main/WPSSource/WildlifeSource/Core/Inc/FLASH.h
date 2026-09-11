@@ -120,4 +120,12 @@ scheduleEvent FLASH_ReadSchedule(uint16_t index);
  */
 uint8_t FLASH_ClearSchedule();
 
+/*
+ * @function: FLASH_ClearLogs();
+ * @brief: Erases all stored log entries (bucket summaries and boot markers)
+ * @param: none
+ * @return: success status
+ */
+uint8_t FLASH_ClearLogs();
+
 #endif /* INC_FLASH_H_ */

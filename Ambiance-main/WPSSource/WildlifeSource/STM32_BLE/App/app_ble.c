@@ -153,19 +153,41 @@ static BleApplicationContext_t bleAppContext;
 
 USART_APP_ConnHandleNotEvt_t USARTHandleNotification;
 
-/* Device name is now built at runtime as "Ambiance Speaker XXXX", where XXXX
- * is a 4-hex-digit tag derived from this chip's factory-programmed 64-bit
- * unique ID (see BLE_BuildDeviceName()). Every unit previously advertised
- * the same fixed name AND the same fixed BD address (CFG_PUBLIC_BD_ADDRESS in
- * app_conf.h), so BLE scanners deduplicated multiple nearby speakers into a
- * single entry. The address fix (switch to HCI_ADDR_STATIC_RANDOM_ADDR) makes
- * each unit discoverable as a distinct device; this name suffix makes them
- * distinguishable at a glance in the GUI's device list too. */
+/* Device name is now built at runtime as "Ambiance Speaker XXXXXX", where
+ * XXXXXX is a 6-hex-digit (24-bit) tag derived from this chip's factory-
+ * programmed 64-bit unique ID (see BLE_BuildDeviceName()). Every unit
+ * previously advertised the same fixed name AND the same fixed BD address
+ * (CFG_PUBLIC_BD_ADDRESS in app_conf.h), so BLE scanners deduplicated
+ * multiple nearby speakers into a single entry. The address fix (switch to
+ * HCI_ADDR_STATIC_RANDOM_ADDR) makes each unit discoverable as a distinct
+ * device; this name suffix makes them distinguishable at a glance in the
+ * GUI's device list too.
+ * Widened from 4 to 6 hex digits (16 to 24 bits) after two genuinely
+ * different boards were confirmed to have collided on the same 4-digit tag -
+ * with only 65536 possible 4-digit tags, a birthday-paradox collision was
+ * already plausible well before a 300-unit fleet. 24 bits (16.7M buckets)
+ * pushes that same 50% collision point out to roughly a 4800-unit fleet.
+ * The bracketed BLE address shown alongside the name in the GUI is still the
+ * one truly guaranteed-unique identifier regardless of tag width. */
 #define GAP_DEVICE_NAME_PREFIX   "Ambiance Speaker "
-#define GAP_DEVICE_NAME_ID_LEN   4U   /* hex chars appended from the unique chip ID */
+#define GAP_DEVICE_NAME_ID_LEN   6U   /* hex chars appended from the unique chip ID */
 #define GAP_DEVICE_NAME_LEN      (sizeof(GAP_DEVICE_NAME_PREFIX) - 1U + GAP_DEVICE_NAME_ID_LEN)
 
 static uint8_t a_GapDeviceName[GAP_DEVICE_NAME_LEN]; /* Gap Device Name, filled in by BLE_BuildDeviceName() */
+
+/* TEMP DIAGNOSTIC: last BD address BLE_Init() derived/wrote for this chip
+ * (STATIC_RANDOM_ADDR path only). Exposed via BLE_GetAddress() so
+ * ButtonsMenuSM.c can show it on the OLED at boot - a way to confirm two
+ * physical units actually have different addresses without needing any
+ * UART (the debug trace UART shares a wire with the real GUI-comm
+ * protocol, so printf-based tracing isn't safe to use for this). Safe to
+ * remove, along with the OLED screen and this declaration, once confirmed. */
+static uint8_t s_bleAddress[6] = {0};
+
+void BLE_GetAddress(uint8_t out[6])
+{
+  memcpy(out, s_bleAddress, 6);
+}
 
 /**
  * Advertising Data
@@ -219,7 +241,7 @@ void ModulesInit(void)
 }
 
 /**
- * Build a per-unit device name ("Ambiance Speaker XXXX") from the chip's
+ * Build a per-unit device name ("Ambiance Speaker XXXXXX") from the chip's
  * factory-programmed 64-bit unique ID (UID64_BASE), and copy it into both
  * the GAP device name characteristic buffer and the advertising data buffer.
  * Must run before Gap_profile_set_dev_name() and before advertising starts.
@@ -229,16 +251,20 @@ static void BLE_BuildDeviceName(void)
   static const char hex_digits[] = "0123456789ABCDEF";
   const uint32_t uid0 = *(volatile uint32_t *)(UID64_BASE);
   const uint32_t uid1 = *(volatile uint32_t *)(UID64_BASE + 4U);
-  /* Fold the 64-bit factory UID down to a 16-bit tag - unique enough to
-   * tell nearby units apart in a scan list without needing the full ID. */
-  const uint16_t id_tag = (uint16_t)(((uid0 * 2654435761U) ^ (uid1 * 2246822519U)) >> 16);
+  /* Fold the 64-bit factory UID down to a 24-bit tag - a much larger name-
+   * space than the previous 16-bit version, to make a same-tag collision
+   * between two units far less likely (see the comment on
+   * GAP_DEVICE_NAME_ID_LEN above). */
+  const uint32_t id_tag = (((uid0 * 2654435761U) ^ (uid1 * 2246822519U)) >> 8) & 0xFFFFFFU;
   const size_t prefix_len = sizeof(GAP_DEVICE_NAME_PREFIX) - 1U;
 
   memcpy(a_GapDeviceName, GAP_DEVICE_NAME_PREFIX, prefix_len);
-  a_GapDeviceName[prefix_len + 0U] = (uint8_t)hex_digits[(id_tag >> 12) & 0xFU];
-  a_GapDeviceName[prefix_len + 1U] = (uint8_t)hex_digits[(id_tag >> 8)  & 0xFU];
-  a_GapDeviceName[prefix_len + 2U] = (uint8_t)hex_digits[(id_tag >> 4)  & 0xFU];
-  a_GapDeviceName[prefix_len + 3U] = (uint8_t)hex_digits[id_tag & 0xFU];
+  a_GapDeviceName[prefix_len + 0U] = (uint8_t)hex_digits[(id_tag >> 20) & 0xFU];
+  a_GapDeviceName[prefix_len + 1U] = (uint8_t)hex_digits[(id_tag >> 16) & 0xFU];
+  a_GapDeviceName[prefix_len + 2U] = (uint8_t)hex_digits[(id_tag >> 12) & 0xFU];
+  a_GapDeviceName[prefix_len + 3U] = (uint8_t)hex_digits[(id_tag >> 8)  & 0xFU];
+  a_GapDeviceName[prefix_len + 4U] = (uint8_t)hex_digits[(id_tag >> 4)  & 0xFU];
+  a_GapDeviceName[prefix_len + 5U] = (uint8_t)hex_digits[id_tag & 0xFU];
 
   /* a_AdvData layout: [0..2]=flags block, [3]=len, [4]=AD_TYPE_COMPLETE_LOCAL_NAME, [5..]=name */
   memcpy(&a_AdvData[5], a_GapDeviceName, GAP_DEVICE_NAME_LEN);
@@ -316,6 +342,54 @@ void BLE_Init(void)
   else
   {
     APP_DBG_MSG("  Success: aci_hal_write_config_data command - CONFIG_DATA_PUBADDR_OFFSET\n");
+  }
+#elif (CFG_BD_ADDRESS_TYPE == HCI_ADDR_STATIC_RANDOM_ADDR)
+  /* CONFIG_DATA_STORED_STATIC_RANDOM_ADDRESS (read-only) is whatever
+   * happens to already be sitting in this chip's BLE-stack NVM region -
+   * nothing in this project ever wrote it, so aci_gap_init() below was
+   * falling back to that stored value. Every unit gets flashed from the
+   * same compiled image, and that NVM region is part of what a normal
+   * full-image flash writes, so multiple physical units ended up with the
+   * IDENTICAL "static random" address baked in from the build rather than
+   * a genuinely unique one - confirmed in the field: two different
+   * speakers showed up as a single flickering entry in a BLE scanner,
+   * which only happens when they share a BD address.
+   *
+   * Fix: explicitly set a real per-chip static random address here, via
+   * CONFIG_DATA_STATIC_RANDOM_ADDRESS ("to set the static random address
+   * used by the stack, INSTEAD OF the one stored in NVM" - see
+   * ble_const.h), derived from the same factory-programmed 64-bit UID
+   * already used for the device name (BLE_BuildDeviceName above), so it's
+   * unique per chip regardless of what the shared image left in NVM.
+   * Uses different multipliers than the name-tag hash so the address and
+   * the visible name digits aren't trivially correlated. Per the Bluetooth
+   * spec, a static random address must have its two most significant bits
+   * set to '1' (address[5] is the MSB here, matching the public-address
+   * byte order above) - forced via the |0xC0 below. */
+  {
+    const uint32_t uid0 = *(volatile uint32_t *)(UID64_BASE);
+    const uint32_t uid1 = *(volatile uint32_t *)(UID64_BASE + 4U);
+    const uint32_t mix0 = (uid0 * 2654435761U) ^ (uid1 * 0x9E3779B1U);
+    const uint32_t mix1 = (uid1 * 2246822519U) ^ (uid0 * 0x85EBCA6BU);
+
+    bd_address[0] = (uint8_t)(mix0);
+    bd_address[1] = (uint8_t)(mix0 >> 8);
+    bd_address[2] = (uint8_t)(mix0 >> 16);
+    bd_address[3] = (uint8_t)(mix1);
+    bd_address[4] = (uint8_t)(mix1 >> 8);
+    bd_address[5] = (uint8_t)((mix1 >> 16) | 0xC0U); /* force static-random top bits '11' */
+    (void)bd_address_len;
+
+    ret = aci_hal_write_config_data(CONFIG_DATA_STATIC_RANDOM_ADDRESS, CONFIG_DATA_PUBADDR_LEN, bd_address);
+    if (ret != BLE_STATUS_SUCCESS)
+    {
+      APP_DBG_MSG("  Fail   : aci_hal_write_config_data command - CONFIG_DATA_STATIC_RANDOM_ADDRESS, result: 0x%02X\n", ret);
+    }
+    else
+    {
+      APP_DBG_MSG("  Success: aci_hal_write_config_data command - CONFIG_DATA_STATIC_RANDOM_ADDRESS\n");
+    }
+    memcpy(s_bleAddress, bd_address, 6); /* TEMP DIAGNOSTIC, see BLE_GetAddress() above */
   }
 #endif
 

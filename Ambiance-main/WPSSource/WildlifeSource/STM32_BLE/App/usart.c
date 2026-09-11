@@ -61,7 +61,11 @@ typedef struct{
 /* Private macros ------------------------------------------------------------*/
 #define CHARACTERISTIC_DESCRIPTOR_ATTRIBUTE_OFFSET        2
 #define CHARACTERISTIC_VALUE_ATTRIBUTE_OFFSET             1
-#define TX_SIZE        1	/* VIRTUAL USART TX Characteristic size */
+#define TX_SIZE        20	/* VIRTUAL USART TX Characteristic size - widened from 1 so a
+                                 * single REQ_TX exchange can carry a real chunk instead of one
+                                 * byte at a time. 20 stays under even the unnegotiated default
+                                 * BLE ATT_MTU (23 bytes -> 20 bytes usable payload), so this
+                                 * works regardless of whether a larger MTU gets negotiated. */
 #define RX_SIZE        1	/* VIRTUAL USART RX Characteristic size */
 #define REQ_TX_SIZE        1	/* VIRTUAL USART REQ TX Characteristic size */
 /* USER CODE BEGIN PM */
@@ -104,8 +108,14 @@ static USART_Context_t USART_Context;
 uint8_t tx_val_buffer[TX_SIZE];
 
 static ble_gatt_val_buffer_def_t tx_val_buffer_def = {
-  .op_flags = BLE_GATT_SRV_OP_MODIFIED_EVT_ENABLE_FLAG,
-  .val_len = TX_SIZE,
+  /* VAR_LENGTH_FLAG lets val_len (the actual number of valid bytes the
+   * client reads back) differ from buffer_len (the allocated max, TX_SIZE)
+   * on each update - see USART_UpdateValue's USART_TX case below, which
+   * sets val_len to match however many bytes were actually queued instead
+   * of always exposing all TX_SIZE bytes (which would otherwise leak
+   * stale/garbage bytes on a short final chunk). */
+  .op_flags = BLE_GATT_SRV_OP_MODIFIED_EVT_ENABLE_FLAG | BLE_GATT_SRV_OP_VALUE_VAR_LENGTH_FLAG,
+  .val_len = 0,
   .buffer_len = sizeof(tx_val_buffer),
   .buffer_p = tx_val_buffer
 };
@@ -384,7 +394,13 @@ tBleStatus USART_UpdateValue(USART_CharOpcode_t CharOpcode, USART_Data_t *pData)
   switch(CharOpcode)
   {
     case USART_TX:
-      memcpy(tx_val_buffer, pData->p_Payload, MIN(pData->Length, sizeof(tx_val_buffer)));
+      {
+        uint16_t actual_len = MIN(pData->Length, sizeof(tx_val_buffer));
+        memcpy(tx_val_buffer, pData->p_Payload, actual_len);
+        /* Report only the bytes actually written this update - see the
+         * VAR_LENGTH_FLAG comment on tx_val_buffer_def above. */
+        tx_val_buffer_def.val_len = actual_len;
+      }
       /* USER CODE BEGIN Service1_Char_Value_1*/
 
       /* USER CODE END Service1_Char_Value_1*/

@@ -297,3 +297,4 @@ uint8_t FLASH_ClearSchedule(){
 	HAL_StatusTypeDef status = HAL_FLASHEx_Erase(&erase, &faultypage);
 	return status == HAL_OK;
 }
+

@@ -17,7 +17,7 @@ import threading
 import serial.tools.list_ports
 from bleak import BleakScanner, BleakClient
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 
 
@@ -126,13 +126,33 @@ class AmbianceGUI(tk.Tk):
         )
         self.bluetooth_button.pack(anchor="nw", padx=10, pady=(5, 0))
 
-        # Scan button
+        # Scan / Connect / Disconnect all share one row.
+        scan_connect_frame = ttk.Frame(bluetooth_frame)
+        scan_connect_frame.pack(pady=7, padx=10, fill="x")
+
         self.scan_button = ttk.Button(
-            bluetooth_frame,
+            scan_connect_frame,
             text="Scan for Devices",
             command=self.start_scan_devices
         )
-        self.scan_button.pack(pady=7, padx=10)
+        self.scan_button.pack(side=tk.LEFT, padx=(0, 5), expand=True, fill="x")
+
+        # Connect button
+        self.bluetooth_connect_button = ttk.Button(
+            scan_connect_frame,
+            text="Connect",
+            command=self.connect_to_bluetooth
+        )
+        self.bluetooth_connect_button.pack(side=tk.LEFT, padx=5, expand=True, fill="x")
+
+        # Disconnect button
+        self.bluetooth_disconnect_button = ttk.Button(
+            scan_connect_frame,
+            text="Disconnect",
+            command=self.disconnect_device,
+            state=tk.DISABLED
+        )
+        self.bluetooth_disconnect_button.pack(side=tk.LEFT, padx=(5, 0), expand=True, fill="x")
 
         # Device list label
         self.devices_label = ttk.Label(bluetooth_frame, text="Discovered Devices:")
@@ -142,26 +162,37 @@ class AmbianceGUI(tk.Tk):
         self.devices_listbox = tk.Listbox(bluetooth_frame, height=5)
         self.devices_listbox.pack(pady=5, padx=10, fill="x")
 
-        # Create frame for connect/disconnect buttons
-        button_frame = ttk.Frame(bluetooth_frame)
-        button_frame.pack(pady=5, padx=10, fill="x")
+        # Force Time Sync / Skip Auto Time Sync share a row here since both
+        # are about what happens when this device connects, not the
+        # schedule (moved from the Scheduler's Time Range section).
+        time_sync_frame = ttk.Frame(bluetooth_frame)
+        time_sync_frame.pack(pady=5, padx=10, fill="x")
 
-        # Connect button
-        self.bluetooth_connect_button = ttk.Button(
-            button_frame,
-            text="Connect",
-            command=self.connect_to_bluetooth
+        # Manual time sync - the connected device's clock is normally set
+        # automatically on connect, but that happens silently; this lets you
+        # force it on demand and see the real success/failure of the write
+        # (see force_time_sync) instead of just trusting the auto-sync.
+        self.force_time_sync_button = ttk.Button(
+            time_sync_frame,
+            text="Force Time Sync",
+            command=self.force_time_sync
         )
-        self.bluetooth_connect_button.pack(side=tk.LEFT, padx=(0, 5), expand=True)
+        self.force_time_sync_button.pack(side=tk.LEFT, padx=(0, 5), expand=True, fill="x")
+        self.force_time_sync_button.config(state=tk.DISABLED)
 
-        # Disconnect button
-        self.bluetooth_disconnect_button = ttk.Button(
-            button_frame,
-            text="Disconnect",
-            command=self.disconnect_device,
-            state=tk.DISABLED
+        # Skip-auto-sync toggle - the auto time sync fires the instant a
+        # connection is established, before there's any chance to click
+        # Check Time first, so there's no way to see the device's own
+        # unmodified RTC reading unless this is off for that one connect.
+        # Leave it checked normally; only uncheck it to diagnose whether the
+        # device's clock is drifting/resetting on its own between connects.
+        self.skip_auto_time_sync_var = tk.BooleanVar(value=False)
+        self.skip_auto_time_sync_check = ttk.Checkbutton(
+            time_sync_frame,
+            text="Skip auto time sync on next connect (diagnostic)",
+            variable=self.skip_auto_time_sync_var
         )
-        self.bluetooth_disconnect_button.pack(side=tk.LEFT, padx=(5, 0), expand=True)
+        self.skip_auto_time_sync_check.pack(side=tk.LEFT, padx=(5, 0))
 
     def _setup_uart_controls(self, parent_frame):
         """Set up the UART port selection and connection controls."""
@@ -267,7 +298,11 @@ class AmbianceGUI(tk.Tk):
         volume_input_frame = ttk.Frame(volume_section)
         volume_input_frame.pack(pady=7, padx=10)
         self.volm = tk.IntVar()
-        self.volume_input = tk.Scale(volume_input_frame,orient = 'horizontal', variable = self.volm, from_ = 0, to = 100, showvalue = 1)
+        # length=280 gives ~2.8 pixels per unit (default length is only
+        # ~100px for this 0-100 range, i.e. ~1px/unit) - too fine to reliably
+        # click an exact value like 20, 30, 70 by mouse; resolution=1 makes
+        # the 1-unit step explicit rather than relying on the tk.Scale default.
+        self.volume_input = tk.Scale(volume_input_frame, orient='horizontal', variable=self.volm, from_=0, to=100, resolution=1, length=280, showvalue=1)
         self.volume_input.pack()
         
         # Volume set button below
@@ -286,7 +321,8 @@ class AmbianceGUI(tk.Tk):
         duty_input_frame = ttk.Frame(duty_section)
         duty_input_frame.pack(pady=7, padx=10)
         self.duty_cyc = tk.IntVar()
-        self.duty_cycle_input = tk.Scale(duty_input_frame,orient = 'horizontal',variable = self.duty_cyc , from_ = 0, to = 100, showvalue = 1)
+        # Same precision fix as the volume slider above - see that comment.
+        self.duty_cycle_input = tk.Scale(duty_input_frame, orient='horizontal', variable=self.duty_cyc, from_=0, to=100, resolution=1, length=280, showvalue=1)
         self.duty_cycle_input.pack()
         
         # Duty cycle set button below
@@ -429,6 +465,10 @@ class AmbianceGUI(tk.Tk):
         )
         time_hint_label.pack(pady=(0, 5))
 
+        # Force Time Sync and the skip-auto-sync diagnostic checkbox live in
+        # the Bluetooth connection panel now (see _setup_bluetooth_controls)
+        # - both are about the connection itself, not the schedule.
+
     def _setup_file_section(self, parent_frame):
         """Set up the file selection controls with better organization."""
         # Create labeled frame for file controls
@@ -505,35 +545,69 @@ class AmbianceGUI(tk.Tk):
         )
         self.import_schedules_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
 
+        # Clear schedule button - sends CLEARSCHEDULE (0x07) to the connected
+        # device, matching the OLED's own "Clear Schedule" menu item. This is
+        # distinct from "Clear Queue" above, which only clears the local
+        # not-yet-sent queue in this GUI and never touches the device.
+        self.clear_device_schedule_button = ttk.Button(
+            action_frame,
+            text="Clear Device Schedule",
+            command=self.clear_device_schedule
+        )
+        self.clear_device_schedule_button.pack(side=tk.LEFT, padx=5, pady=7, expand=True)
+
     def _setup_log_section(self):
         """Set up the log and output section."""
-        # Create frame for log controls
+        # Create frame for log controls. This column is narrower than the
+        # Scheduler panel (which claims the flexible space), so the buttons
+        # are two-per-row rather than relying on shrinking them to fit one
+        # row - that stays reliable no matter how narrow this column ends up.
         bottom_button_frame = ttk.Frame(self.frame)
         bottom_button_frame.pack(fill="both", padx=10, pady=5)
 
+        top_row = ttk.Frame(bottom_button_frame)
+        top_row.pack(fill="x")
+
+        bottom_row = ttk.Frame(bottom_button_frame)
+        bottom_row.pack(fill="x", pady=(5, 0))
+
         # Download log button
         self.download_log_button = ttk.Button(
-            bottom_button_frame,
-            text="Download Log",
+            top_row,
+            text="Download Device Log",
             command=self.download_log
         )
-        self.download_log_button.pack(side=tk.LEFT, padx=5)
+        self.download_log_button.pack(side=tk.LEFT, padx=5, expand=True, fill="x")
+
+        # Clear device log button - sends CLEARLOGS (0x08). Distinct from
+        # both Clear Queue (local only) and Clear Device Schedule (schedule
+        # flash region only) - this erases the stored bucket-summary/boot-
+        # marker log entries so a Download Log afterward starts fresh
+        # instead of returning old, potentially pre-reflash data.
+        self.clear_device_log_button = ttk.Button(
+            top_row,
+            text="Clear Device Log",
+            command=self.clear_device_log
+        )
+        self.clear_device_log_button.pack(side=tk.LEFT, padx=5, expand=True, fill="x")
 
         # Check status button
         self.check_status_button = ttk.Button(
-            bottom_button_frame,
-            text="Check Status",
+            bottom_row,
+            text="Check Device Status",
             command=self.check_status
         )
-        self.check_status_button.pack(side=tk.LEFT, padx=5)
+        self.check_status_button.pack(side=tk.LEFT, padx=5, expand=True, fill="x")
 
-        # Clear output button
-        self.clear_button = ttk.Button(
-            bottom_button_frame,
-            text="Clear Output",
-            command=self.clear_textbox
+        # Check time button - sends TIMEREQUEST (0x10), a small read-only
+        # diagnostic added to directly confirm what the device's RTC-derived
+        # clock currently reads, instead of inferring it from log gaps.
+        self.check_time_button = ttk.Button(
+            bottom_row,
+            text="Check Device Time",
+            command=self.check_time
         )
-        self.clear_button.pack(side=tk.RIGHT, padx=5)
+        self.check_time_button.pack(side=tk.LEFT, padx=5, expand=True, fill="x")
 
         # Create text display area
         self._setup_text_display()
@@ -571,6 +645,18 @@ class AmbianceGUI(tk.Tk):
         # Initialize event loop
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        # Every coroutine that talks to the BLE GATT characteristics
+        # (bluetooth_send, the log download, and the status check) must hold
+        # this before touching self.ble_client. A single BLE connection can't
+        # really have two GATT operations in flight at once - e.g. a Force
+        # Time Sync click landing while a volume-slider "Set" is still
+        # mid-transmission - and without serializing them here, their reads/
+        # writes to the shared RX/TX/REQ_TX characteristics interleave on
+        # the wire. That produces exactly the intermittent failures seen in
+        # the field: "Failed to send data: disconnected" and "BLE client
+        # not connected" errors that only show up when commands are fired
+        # in quick succession, not when they're spaced out.
+        self.ble_op_lock = asyncio.Lock()
         
         # Start event loop in separate thread
         self.loop_thread = threading.Thread(
@@ -649,6 +735,7 @@ class AmbianceGUI(tk.Tk):
         self.send_all_button.config(state=tk.DISABLED)
         self.export_schedules_button.config(state=tk.DISABLED)
         self.import_schedules_button.config(state=tk.DISABLED)
+        self.force_time_sync_button.config(state=tk.DISABLED)
 
     def _run_event_loop(self):
         """
@@ -795,12 +882,18 @@ class AmbianceGUI(tk.Tk):
         """
         if not hasattr(self, "discovered_devices"):
             return
+        # Read the listbox's own (theme/OS-provided) default colors rather
+        # than hardcoding white/black - this widget is never given explicit
+        # colors of its own, so it inherits the app's dark theme by default,
+        # and hardcoding "white" here was overriding that for every row.
+        default_bg = self.devices_listbox.cget("background")
+        default_fg = self.devices_listbox.cget("foreground")
         for i, device in enumerate(self.discovered_devices):
             addr = getattr(device, "address", None)
             if self.active_device_address is not None and addr == self.active_device_address:
-                self.devices_listbox.itemconfig(i, background="#d4f7d4", foreground="black")
+                self.devices_listbox.itemconfig(i, background="#2ecc71", foreground="black")
             else:
-                self.devices_listbox.itemconfig(i, background="white", foreground="black")
+                self.devices_listbox.itemconfig(i, background=default_bg, foreground=default_fg)
 
 
     def _handle_scan_error(self, error_msg):
@@ -1106,7 +1199,19 @@ class AmbianceGUI(tk.Tk):
                 if self.ble_client.is_connected:
                     await self.ble_client.disconnect()
             except Exception as e:
-                self.after(0, lambda: self.devices_text_insert(f"[BT] Warning: Error during cleanup: {str(e)}", debug=True))
+                # Always visible, not debug-only: if the physical
+                # disconnect fails/times out here, the old connection can
+                # remain alive at the OS/radio level even though we're
+                # about to clear our own state and treat it as gone - that
+                # mismatch is exactly what leaves connections stranded
+                # (contending for the Mac's shared BLE connection slots)
+                # across a multi-speaker session.
+                self.after(0, lambda: self.devices_text_insert(
+                    f"[BT][WARNING] Disconnect did not complete cleanly ({str(e)}) - "
+                    f"the previous device's connection may still be live. If speakers "
+                    f"start jittering/toggling or a new one won't connect, quit and "
+                    f"restart the app (or toggle Bluetooth off/on) to clear it."
+                ))
             finally:
                 self.ble_client = None
                 self.device_connected = False
@@ -1159,6 +1264,19 @@ class AmbianceGUI(tk.Tk):
 
     async def bluetooth_send(self, data_bytes):
         """
+        Send data over Bluetooth, serialized against every other BLE GATT
+        operation (see self.ble_op_lock) so an overlapping command - e.g. a
+        Force Time Sync landing while a volume Set is still transmitting -
+        can't interleave its RX/TX/REQ_TX traffic with this one. Concurrent,
+        unserialized access to those characteristics was the actual cause of
+        the intermittent "disconnected" / "BLE client not connected" errors
+        seen when multiple controls were used in quick succession.
+        """
+        async with self.ble_op_lock:
+            return await self._bluetooth_send_impl(data_bytes)
+
+    async def _bluetooth_send_impl(self, data_bytes):
+        """
         Asynchronously send data over Bluetooth following the microcontroller protocol:
         1. Write data to RX
         2. Write 1 to TX_REQ to request transmission
@@ -1177,7 +1295,16 @@ class AmbianceGUI(tk.Tk):
             for byte in data_bytes:
                 byte = byte.to_bytes(1,'big')
                 await self.ble_client.write_gatt_char(self.ble_rx_uuid, byte)
-                self.after(0, lambda: self.devices_text_insert(f"[BT][RX] Data written to RX: {list(byte)}", debug=True))
+                # Bind the *current* byte as a default arg, not a closure over the
+                # loop variable - self.after() only queues this for Tkinter to run
+                # later, and by then the loop may already be on a later byte, so a
+                # bare "lambda: ...byte..." would print whatever byte the loop had
+                # reached by the time Tkinter got around to it, not the one that was
+                # actually just written. This was purely a misleading log message -
+                # the actual write_gatt_char call above always sent the right byte -
+                # but it looked exactly like real data corruption (e.g. two "[15]"
+                # prints in a row for an intended [0, 15]) when it wasn't.
+                self.after(0, lambda b=byte: self.devices_text_insert(f"[BT][RX] Data written to RX: {list(b)}", debug=True))
                 await asyncio.sleep(0.01)  # 10ms delay
             
             
@@ -1192,6 +1319,7 @@ class AmbianceGUI(tk.Tk):
             max_attempts = 80  # Maximum number of polling attempts
             attempt = 0
             last_tx_req = None
+            transmission_confirmed = False
             
             while attempt < max_attempts:
                 # First read from TX to empty the buffer
@@ -1204,8 +1332,9 @@ class AmbianceGUI(tk.Tk):
                         await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
                         self.after(0, lambda: self.devices_text_insert("[BT][TX_REQ] Acknowledged receipt with 1", debug=True))
                 except Exception as e:
-                    # Log read errors for debugging
-                    self.after(0, lambda: self.devices_text_insert(f"[BT][TX] No data available on read attempt {attempt}", debug=True))
+                    # Log read errors for debugging (bind attempt as a default arg -
+                    # same late-binding issue as the RX byte print above)
+                    self.after(0, lambda a=attempt: self.devices_text_insert(f"[BT][TX] No data available on read attempt {a}", debug=True))
                 
                 # Then check TX_REQ status
                 try:
@@ -1213,11 +1342,17 @@ class AmbianceGUI(tk.Tk):
                     req_value = tx_req[0]
                     
                     if last_tx_req != req_value:
-                        self.after(0, lambda: self.devices_text_insert(f"[BT][TX_REQ] State changed from {last_tx_req} to {req_value}", debug=True))
+                        # Bind both values now, as default args - otherwise this
+                        # deferred print can end up showing the *post*-assignment
+                        # last_tx_req (since it's reassigned on the very next line),
+                        # producing nonsensical output like "changed from 2 to 2"
+                        # even though a real transition happened.
+                        self.after(0, lambda old=last_tx_req, new=req_value: self.devices_text_insert(f"[BT][TX_REQ] State changed from {old} to {new}", debug=True))
                         last_tx_req = req_value
                     
                     if req_value == 2:
                         # Transmission complete
+                        transmission_confirmed = True
                         self.after(0, lambda: self.devices_text_insert("[BT][TX_REQ] Transmission complete signal received", debug=True))
                         break
                 except Exception as e:
@@ -1228,7 +1363,7 @@ class AmbianceGUI(tk.Tk):
                 attempt += 1
                 
                 if attempt % 5 == 0:
-                    self.after(0, lambda: self.devices_text_insert(f"[BT] Polling attempt {attempt}/{max_attempts}", debug=True))
+                    self.after(0, lambda a=attempt: self.devices_text_insert(f"[BT] Polling attempt {a}/{max_attempts}", debug=True))
             
             # Process final results
             if response_bytes:
@@ -1256,7 +1391,16 @@ class AmbianceGUI(tk.Tk):
                     self.after(0, lambda: self.devices_text_insert("[BT][TX] No valid message received", debug=True))
             else:
                 self.after(0, lambda: self.devices_text_insert("[BT][TX] No messages received after all attempts", debug=True))
-            
+
+            if not transmission_confirmed:
+                # The loop exhausted max_attempts without ever seeing
+                # TX_REQ==2 - the device never confirmed it received/
+                # processed the data. This used to be treated the same as
+                # success (a misleading "Communication complete" was always
+                # printed), so a dropped write - e.g. a time sync during
+                # connection contention - looked identical to it working.
+                raise Exception("Transmission not confirmed by device (timed out waiting for TX_REQ=2)")
+
             self.after(0, lambda: self.devices_text_insert("[BT][TX] Communication complete", debug=True))
         except Exception as e:
             raise Exception(f"Failed to send data: {str(e)}")
@@ -1381,6 +1525,23 @@ class AmbianceGUI(tk.Tk):
             # Stop polling if connection is lost
             self.devices_text_insert("[UART] Polling stopped - connection lost", debug=True)
 
+    def _connected_device_short_name(self):
+        """
+        Best-effort 4-character speaker identifier for the connected device,
+        matching what's shown in the scan list and on the OLED (e.g.
+        "Ambiance Speaker 2CE5" -> "2CE5"). Falls back to "UART" when
+        connected over a serial cable (no advertised name to draw from), or
+        "device" if a Bluetooth name doesn't look like the expected format.
+        """
+        if self.connection_type.get() == "UART":
+            return "UART"
+        name = getattr(self.ble_device, "name", None) if self.ble_device else None
+        if name:
+            last_token = name.strip().split()[-1]
+            if last_token:
+                return last_token
+        return "device"
+
     def download_log(self):
         """Request and download system log from the device (UART or Bluetooth)."""
         if not self.ensure_device_connected():
@@ -1388,12 +1549,16 @@ class AmbianceGUI(tk.Tk):
             return
 
         # Ask where to save before contacting the device, same as Export Schedules.
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Date only (no time-of-day) - a same-day re-download just prompts the
+        # normal save-dialog overwrite confirmation rather than silently
+        # piling up timestamped files.
+        date_str = datetime.now().strftime("%Y%m%d")
+        short_name = self._connected_device_short_name()
         file_path = filedialog.asksaveasfilename(
             title="Save Log As",
             defaultextension=".txt",
             filetypes=[("Text Files", "*.txt")],
-            initialfile=f"log_{timestamp}.txt"
+            initialfile=f"log_{date_str}_{short_name}.txt"
         )
         if not file_path:
             self.devices_text_insert("Download canceled by user.")
@@ -1436,6 +1601,14 @@ class AmbianceGUI(tk.Tk):
             try:
                 # Bluetooth Download Logic
                 async def ble_download():
+                    # Serialize against bluetooth_send()/ble_status() - see
+                    # self.ble_op_lock's definition. A log download in
+                    # progress must not interleave its RX/TX/REQ_TX traffic
+                    # with e.g. a schedule send fired mid-download.
+                    async with self.ble_op_lock:
+                        await ble_download_impl()
+
+                async def ble_download_impl():
                     if self.ble_client and self.ble_client.is_connected:
                         # Send the request command directly here - do NOT route
                         # this through send_over_bluetooth()/bluetooth_send(). That
@@ -1447,34 +1620,55 @@ class AmbianceGUI(tk.Tk):
                         await self.ble_client.write_gatt_char(self.ble_rx_uuid, bytes([0x02]))
 
                         # Protocol: a byte only lands in the TX characteristic in
-                        # response to a write on REQ_TX. Every read below must be
-                        # preceded by exactly one REQ_TX write requesting it -
-                        # reading first (the old bug) just returns whatever stale
-                        # value the characteristic last held.
-                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request high byte
-                        high = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
-                        await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request low byte
-                        low = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
+                        # response to a write on REQ_TX - but since the firmware side
+                        # was widened to drain up to ~20 queued bytes per REQ_TX
+                        # request instead of exactly 1 (for BLE transfer speed), a
+                        # single request here can now return the 2 size bytes AND
+                        # the start of the actual log entries all in the same
+                        # response. The old code assumed "high" and "low" were each
+                        # exactly one byte and threw away anything past index 0 -
+                        # that silently discarded real log data on every download
+                        # once the firmware started batching, which is exactly what
+                        # produced garbled/shifted-looking log entries (nonsense
+                        # months/days) even though nothing was wrong with the RTC or
+                        # the scheduler. Fix: accumulate everything received into one
+                        # running buffer and slice fields off the front of it, rather
+                        # than assuming a chunk boundary lines up with a field
+                        # boundary.
+                        raw = b""
 
-                        if not high or not low:
-                            self.devices_text_insert("[BT][ERROR] Failed to receive log size.")
-                            return
+                        async def request_more():
+                            nonlocal raw
+                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
+                            chunk = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
+                            if chunk:
+                                raw += chunk
+                            return chunk
 
-                        entry_count = (high[0] << 8) | low[0]
+                        while len(raw) < 2:
+                            if not await request_more():
+                                self.devices_text_insert("[BT][ERROR] Failed to receive log size.")
+                                return
+
+                        entry_count = (raw[0] << 8) | raw[1]
                         size = entry_count * self.LOG_ENTRY_SIZE
                         self.devices_text_insert(f"[BT][RX] Log size received: {entry_count} entries ({size} bytes)", debug=True)
 
-                        received_data = b""
-                        if size > 0:
-                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request first data byte
-                        while len(received_data) < size:
-                            chunk = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
-                            if not chunk:
+                        # Report progress periodically rather than on every byte/chunk -
+                        # printing + scheduling a Tkinter UI update per read is real
+                        # avoidable overhead on top of the BLE round trips themselves.
+                        last_reported = 0
+                        while (len(raw) - 2) < size:
+                            n = max(len(raw) - 2, 0)
+                            if n - last_reported >= 50:
+                                last_reported = n
+                                self.devices_text_insert(f"[BT][RX] Received {n} / {size} bytes...", debug=True)
+                            if not await request_more():
                                 break
-                            received_data += chunk
-                            self.devices_text_insert(f"[BT][RX] Received {len(received_data)} / {size} bytes...", debug=True)
-                            if len(received_data) < size:
-                                await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))  # request next byte
+
+                        received_data = raw[2:2 + size]
+                        n = len(received_data)
+                        self.devices_text_insert(f"[BT][RX] Received {n} / {size} bytes...", debug=True)
 
                         log_text = self.format_log_entries(received_data)
                         self.after(0, lambda: self.save_log(log_text, file_path))
@@ -1531,6 +1725,12 @@ class AmbianceGUI(tk.Tk):
                 self.devices_text_insert("[BT][TX] Sending status request command: 0x06", debug=True)
 
                 async def ble_status():
+                    # Serialize against bluetooth_send()/ble_download() - see
+                    # self.ble_op_lock's definition.
+                    async with self.ble_op_lock:
+                        await ble_status_impl()
+
+                async def ble_status_impl():
                     if not (self.ble_client and self.ble_client.is_connected):
                         self.devices_text_insert("[BT][ERROR] No BLE connection active.")
                         return
@@ -1583,34 +1783,169 @@ class AmbianceGUI(tk.Tk):
 
         self.devices_text_insert(f"Speaker status: {text}")
 
+    def check_time(self):
+        """
+        Query the device's current RTC-derived month/day/hour/minute
+        (TIMEREQUEST, 0x10). A read-only diagnostic - lets you directly
+        confirm the device's clock is valid and advancing, instead of
+        inferring it from gaps in a downloaded log.
+        """
+        if not self.ensure_device_connected():
+            self.devices_text_insert("Error: No device connected.")
+            return
+
+        self.devices_text_insert("Requesting device time...")
+
+        if self.connection_type.get() == "UART" and self.serial_conn:
+            try:
+                self.devices_text_insert("[UART][TX] Sending time request command: 0x10", debug=True)
+                self.serial_conn.write(bytes([0x10]))
+
+                reply = self.serial_conn.read(4)
+                if len(reply) < 4:
+                    self.devices_text_insert("[UART][ERROR] No response to time request.")
+                    return
+
+                self._show_time(reply[0], reply[1], reply[2], reply[3])
+
+            except Exception as e:
+                self.devices_text_insert(f"[UART][ERROR] during time request: {e}", debug=True)
+
+        elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+            try:
+                self.devices_text_insert("[BT][TX] Sending time request command: 0x10", debug=True)
+
+                async def ble_time():
+                    # Serialize against bluetooth_send()/ble_download()/ble_status() -
+                    # see self.ble_op_lock's definition.
+                    async with self.ble_op_lock:
+                        await ble_time_impl()
+
+                async def ble_time_impl():
+                    if not (self.ble_client and self.ble_client.is_connected):
+                        self.devices_text_insert("[BT][ERROR] No BLE connection active.")
+                        return
+
+                    await self.ble_client.write_gatt_char(self.ble_rx_uuid, bytes([0x10]))
+                    await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
+
+                    reply = bytearray()
+                    for _ in range(50):  # up to ~1s at 20ms/poll
+                        await asyncio.sleep(0.02)
+                        chunk = await self.ble_client.read_gatt_char(self.ble_tx_uuid)
+                        if chunk:
+                            reply.extend(chunk)
+                            await self.ble_client.write_gatt_char(self.ble_req_tx_uuid, bytes([1]))
+                            if len(reply) >= 4:
+                                break
+
+                    if len(reply) < 4:
+                        self.after(0, lambda: self.devices_text_insert("[BT][ERROR] No response to time request."))
+                    else:
+                        month_byte, day_byte, hour_byte, minute_byte = reply[0], reply[1], reply[2], reply[3]
+                        self.after(0, lambda: self._show_time(month_byte, day_byte, hour_byte, minute_byte))
+
+                def _run_time_check():
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(ble_time(), self.loop)
+                        future.result(timeout=15)
+                    except Exception as e:
+                        error_msg = str(e)
+                        self.after(0, lambda: self.devices_text_insert(f"[BT][ERROR] during time request: {error_msg}", debug=True))
+
+                threading.Thread(target=_run_time_check, daemon=True).start()
+
+            except Exception as e:
+                self.devices_text_insert(f"[BT][ERROR] during time request: {e}", debug=True)
+
+        else:
+            self.devices_text_insert("Error: Time check only supported over UART or Bluetooth.")
+
+    def _show_time(self, month, day, hour, minute):
+        """Display the decoded month/day/hour/minute reply from check_time()."""
+        if month == 0 or day == 0:
+            self.devices_text_insert(
+                f"Device time: Month {month:02d} Day {day:02d} {hour:02d}:{minute:02d}  "
+                "(not yet valid - device hasn't seen a real time sync since its last reset)"
+            )
+        else:
+            self.devices_text_insert(f"Device time: Month {month:02d} Day {day:02d} {hour:02d}:{minute:02d}")
+
     LOG_ENTRY_SIZE = 7  # month, daystart, start, daystop, stop, folder, track
     LOG_BUCKET_HOURS = 2  # must match LOGBUCKETHOURS in Scheduler.c
+    LOG_BOOT_MARKER = 2  # stop==2 marks a boot-reset record instead of a bucket summary (see Scheduler.c)
+    LOG_PROGRAMMED_SILENCE = 3  # bucket summary stop==3: MP3 confirmed alive/idle by design, never actually broadcast (see Scheduler.c)
+
+    # Must match RESETCAUSE_* in Scheduler.h
+    RESET_CAUSE_BITS = [
+        (1 << 0, "power-on/brown-out"),
+        (1 << 1, "external reset pin"),
+        (1 << 2, "software reset"),
+        (1 << 3, "watchdog"),
+        (1 << 4, "CPU lockup"),
+    ]
+
+    def _decode_reset_cause(self, cause_byte):
+        """Turn a RESETCAUSE_* bitmask byte into a human-readable list of causes."""
+        causes = [label for bit, label in self.RESET_CAUSE_BITS if cause_byte & bit]
+        if not causes:
+            return f"unknown (0x{cause_byte:02X})"
+        return ", ".join(causes)
 
     def format_log_entries(self, data):
         """
         Decode raw log bytes from the device into a human-readable log.
 
-        Each entry covers one LOG_BUCKET_HOURS-wide window of a calendar day:
-        month, daystart, start, daystop, stop, folder, track. `start` is which
-        bucket this entry covers (0 = 00:00, 1 = 02:00, ...). `stop` is 1 if
-        the speaker broadcast at least once during that window, 0 if it was
-        silent the whole window ("dead"). `folder`/`track` are the last track
-        played in that window (0 if it never played). `daystop` is unused.
+        Each entry is either a bucket summary or a boot marker, both packed
+        into the same 7-byte scheduleEvent wire format: month, daystart,
+        start, daystop, stop, folder, track.
+
+        Bucket summary (stop is 0, 1, or 3): covers one LOG_BUCKET_HOURS-wide
+        window of a calendar day. `start` is which bucket this entry covers
+        (0 = 00:00, 1 = 02:00, ...). `stop` is 1 if the speaker broadcast at
+        least once during that window; 3 if it never broadcast but was
+        confirmed alive and idle by design the whole window (mid duty-cycle
+        pause, or simply outside any scheduled window - "programmed
+        silence", not a failure); 0 if neither was ever observed, meaning
+        the device never responded at all during that window ("dead"/
+        unresponsive). `folder`/`track` are the last track played in that
+        window (0 if it never played). `daystop` is unused.
+
+        Boot marker (stop == LOG_BOOT_MARKER): logged once per device boot,
+        the first time RTC time becomes valid again. `start` holds the boot
+        time-of-day packed as hour<<3 | (minute//15), same scheme as a
+        schedule entry's start/stop times. `folder` holds a RESETCAUSE_*
+        bitmask (see Scheduler.h) saying why the device reset - in
+        particular, "power-on/brown-out" is the signature of a power-supply
+        or charging-circuit brownout rather than a firmware fault. `track`
+        and `daystop` are unused.
         """
         lines = []
         entry_count = len(data) // self.LOG_ENTRY_SIZE
         for i in range(entry_count):
             offset = i * self.LOG_ENTRY_SIZE
-            month, daystart, bucket, daystop, played, folder, track = data[offset:offset + self.LOG_ENTRY_SIZE]
+            month, daystart, packed, daystop, played, folder, track = data[offset:offset + self.LOG_ENTRY_SIZE]
 
-            bucket_start_hour = (bucket * self.LOG_BUCKET_HOURS) % 24
+            if played == self.LOG_BOOT_MARKER:
+                boot_hour = (packed & 0b11111000) >> 3
+                boot_min = (packed & 0b00000011) * 15
+                cause_text = self._decode_reset_cause(folder)
+                lines.append(
+                    f"Month {month:02d} Day {daystart:02d} {boot_hour:02d}:{boot_min:02d}: "
+                    f"Device booted (cause: {cause_text})"
+                )
+                continue
+
+            bucket_start_hour = (packed * self.LOG_BUCKET_HOURS) % 24
             bucket_end_hour = bucket_start_hour + self.LOG_BUCKET_HOURS
             window = f"{bucket_start_hour:02d}:00-{bucket_end_hour:02d}:00"
 
-            if played:
+            if played == 1:
                 lines.append(f"Month {month:02d} Day {daystart:02d} {window}: Broadcast  (last played Folder {folder} Track {track})")
+            elif played == self.LOG_PROGRAMMED_SILENCE:
+                lines.append(f"Month {month:02d} Day {daystart:02d} {window}: Programmed silence (device alive, idle by design)")
             else:
-                lines.append(f"Month {month:02d} Day {daystart:02d} {window}: No broadcast")
+                lines.append(f"Month {month:02d} Day {daystart:02d} {window}: No broadcast (device unresponsive)")
 
         leftover = len(data) % self.LOG_ENTRY_SIZE
         if leftover:
@@ -1777,6 +2112,110 @@ class AmbianceGUI(tk.Tk):
         """Clear all queued schedules."""
         self.schedule_queue.clear()
         self.devices_text_insert("Schedule queue cleared.")
+
+    def clear_device_schedule(self):
+        """
+        Clear the schedule stored on the connected device (UART or Bluetooth).
+
+        This sends CLEARSCHEDULE (0x07), a dedicated command distinct from
+        the SCHEDULECONTROL (0x05) used by Send Schedules. Sending an empty
+        schedule via SCHEDULECONTROL isn't the same operation - the device's
+        schedulemonth state always appends its in-progress entry when it
+        sees the end-of-transmission byte, so a "start schedule then
+        immediately end it" message would leave one bogus zeroed entry
+        behind instead of a genuinely empty schedule. CLEARSCHEDULE clears
+        and stops there, mirroring what the OLED's own menu does.
+
+        This deletes every schedule entry on the device - local export/
+        import files and the not-yet-sent queue in this GUI are unaffected.
+        """
+        if not self.ensure_device_connected():
+            self.devices_text_insert("Error: No device connected.")
+            return
+
+        if not messagebox.askyesno(
+            "Clear Device Schedule",
+            "This will permanently erase the schedule stored on the connected "
+            "speaker. This cannot be undone from the GUI. Continue?",
+            icon="warning",
+        ):
+            self.devices_text_insert("Clear device schedule canceled.")
+            return
+
+        command = bytes([0x07])  # CLEARSCHEDULE
+
+        if self.connection_type.get() == "UART" and self.serial_conn:
+            try:
+                self.devices_text_insert("[UART][TX] Sending clear schedule command (0x07)", debug=True)
+                self.serial_conn.write(command)
+                reply = self.serial_conn.read(1)
+                if not reply:
+                    self.devices_text_insert("[UART][ERROR] No response to clear schedule command.")
+                elif reply[0] == 0:
+                    self.devices_text_insert("[UART][ERROR] Device reported clear schedule failed.")
+                else:
+                    self.devices_text_insert("[UART] Device schedule cleared.")
+            except Exception as e:
+                self.devices_text_insert(f"[UART][ERROR] during clear schedule: {e}", debug=True)
+
+        elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+            self.devices_text_insert("[BT][TX] Sending clear schedule command (0x07)", debug=True)
+            # bluetooth_send() already confirms the command was actually
+            # received by the device (raises/reports an error rather than
+            # silently timing out - see its docstring), so there's no need
+            # for a bespoke ack-byte read here on top of that; the device's
+            # 1-byte success/fail reply still lands in its debug response
+            # log if something needs a closer look.
+            self.send_over_bluetooth(command)
+
+        else:
+            self.devices_text_insert("Error: No valid connection type selected.")
+
+    def clear_device_log(self):
+        """
+        Clear the log stored on the connected device (UART or Bluetooth).
+
+        Sends CLEARLOGS (0x08). Doesn't affect the schedule or anything
+        currently playing - only the historical bucket-summary/boot-marker
+        entries that Download Log reads. Whatever 2-hour bucket the device
+        is currently mid-way through keeps accumulating normally and will
+        be the first fresh entry once it closes.
+        """
+        if not self.ensure_device_connected():
+            self.devices_text_insert("Error: No device connected.")
+            return
+
+        if not messagebox.askyesno(
+            "Clear Device Log",
+            "This will permanently erase the log stored on the connected "
+            "speaker. This cannot be undone from the GUI. Continue?",
+            icon="warning",
+        ):
+            self.devices_text_insert("Clear device log canceled.")
+            return
+
+        command = bytes([0x08])  # CLEARLOGS
+
+        if self.connection_type.get() == "UART" and self.serial_conn:
+            try:
+                self.devices_text_insert("[UART][TX] Sending clear log command (0x08)", debug=True)
+                self.serial_conn.write(command)
+                reply = self.serial_conn.read(1)
+                if not reply:
+                    self.devices_text_insert("[UART][ERROR] No response to clear log command.")
+                elif reply[0] == 0:
+                    self.devices_text_insert("[UART][ERROR] Device reported clear log failed.")
+                else:
+                    self.devices_text_insert("[UART] Device log cleared.")
+            except Exception as e:
+                self.devices_text_insert(f"[UART][ERROR] during clear log: {e}", debug=True)
+
+        elif self.connection_type.get() == "Bluetooth" and self.device_connected:
+            self.devices_text_insert("[BT][TX] Sending clear log command (0x08)", debug=True)
+            self.send_over_bluetooth(command)
+
+        else:
+            self.devices_text_insert("Error: No valid connection type selected.")
 
     def export_schedules(self):
         """
@@ -2092,6 +2531,7 @@ class AmbianceGUI(tk.Tk):
                 self.send_all_button.config(state=tk.NORMAL)
                 self.export_schedules_button.config(state=tk.NORMAL)
                 self.import_schedules_button.config(state=tk.NORMAL)
+                self.force_time_sync_button.config(state=tk.NORMAL)
 
                 # Enable appropriate disconnect button and disable connect button
                 if self.connection_type.get() == "UART":
@@ -2102,8 +2542,16 @@ class AmbianceGUI(tk.Tk):
                     self.bluetooth_connect_button.config(state=tk.DISABLED)
                     self.scan_button.config(state=tk.DISABLED)
                 
-                # Update system time and date when connected
-                self.update_system_datetime()
+                # Update system time and date when connected - unless the
+                # diagnostic "skip auto time sync" checkbox is on, in which
+                # case skip it exactly once (so Check Time can see the
+                # device's own unmodified RTC reading) and clear the
+                # checkbox back off so it doesn't stay skipped by accident.
+                if self.skip_auto_time_sync_var.get():
+                    self.skip_auto_time_sync_var.set(False)
+                    self.devices_text_insert("[TIME SYNC] Skipped auto time sync for this connect (diagnostic).", debug=True)
+                else:
+                    self.update_system_datetime()
             else:
                 # Update UI for disconnected state
                 status_color = "red"
@@ -2120,6 +2568,7 @@ class AmbianceGUI(tk.Tk):
                 self.send_all_button.config(state=tk.DISABLED)
                 self.export_schedules_button.config(state=tk.DISABLED)
                 self.import_schedules_button.config(state=tk.DISABLED)
+                self.force_time_sync_button.config(state=tk.DISABLED)
                 self.uart_disconnect_button.config(state=tk.DISABLED)
                 self.bluetooth_disconnect_button.config(state=tk.DISABLED)
                 
@@ -2137,10 +2586,22 @@ class AmbianceGUI(tk.Tk):
             print(f"Error updating connection status: {e}")
             # Don't re-raise the exception to prevent cascading errors
 
+    def force_time_sync(self):
+        """
+        Manually re-push the Mac's current time to the connected device,
+        on demand (not just the automatic sync-on-connect). Useful in the
+        field to confirm the sync actually took, or to correct a device
+        clock without having to disconnect/reconnect.
+        """
+        self.devices_text_insert("[TIME SYNC] Manual time sync requested...")
+        self.update_system_datetime()
+
     def update_system_datetime(self):
         """
         Update the device's date and time with the current system time.
-        This is called automatically when a connection is established.
+        This is called automatically when a connection is established, and
+        can also be triggered on demand via force_time_sync/the "Force Time
+        Sync" button.
         
         The time update packet format is:
         [0x0F, minute, hour, day, month]
@@ -2149,6 +2610,14 @@ class AmbianceGUI(tk.Tk):
         - hour: 0-23
         - day: 1-31
         - month: 1-12
+
+        Note: for Bluetooth, actual success/failure of the write is only
+        known once the background send thread finishes (see
+        bluetooth_send/_run_bluetooth_send) - it now raises instead of
+        silently reporting success when the device never confirms receipt,
+        so a real failure shows up as a visible [BT][ERROR] line. For UART
+        there is no equivalent confirmation in this protocol; the write is
+        best-effort there.
         """
         if not self.ensure_device_connected():
             return
@@ -2185,7 +2654,10 @@ class AmbianceGUI(tk.Tk):
                 self.devices_text_insert(f"[BT][TX] Updating system time: {hour:02d}:{minute:02d} Day:{day:02d} Month:{month:02d}", debug=True)
                 self.send_over_bluetooth(time_bytes)
                 
-            self.devices_text_insert(f"System time updated to {hour:02d}:{minute:02d} Day:{day:02d} Month:{month:02d}")
+            self.devices_text_insert(
+                f"[TIME SYNC] Sent {hour:02d}:{minute:02d} Day:{day:02d} Month:{month:02d} to device "
+                f"(watch for a [BT][ERROR] below if the device doesn't confirm receipt)"
+            )
             
         except ValueError as ve:
             self.devices_text_insert(f"Error: Invalid time value - {str(ve)}")

@@ -67,6 +67,24 @@ static void MX_PKA_Init(void);
 #include "FLASH.h"
 int main(void)
 {
+	//Read why the MCU just reset (power-on/brown-out, external pin, software,
+	//watchdog, or CPU lockup) before ANYTHING else can touch RCC->CSR, then
+	//clear the flags so next boot's read only reflects what happens between
+	//now and the next reset. Stashed here and written into the log once RTC
+	//time is available (see Scheduler_RecordBootResetCause/CompareTime()) -
+	//this is what actually tells us, after the fact, whether the device has
+	//been resetting (and specifically whether by brown-out, e.g. while
+	//charging) rather than inferring it indirectly from gaps in the schedule log.
+	{
+		uint8_t resetCause = 0;
+		if(__HAL_RCC_GET_FLAG(RCC_FLAG_PORRST))   { resetCause |= RESETCAUSE_POR_BOR;  }
+		if(__HAL_RCC_GET_FLAG(RCC_FLAG_PADRSTF))  { resetCause |= RESETCAUSE_PAD;      }
+		if(__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST))   { resetCause |= RESETCAUSE_SOFT;     }
+		if(__HAL_RCC_GET_FLAG(RCC_FLAG_WDGRST))   { resetCause |= RESETCAUSE_WATCHDOG; }
+		if(__HAL_RCC_GET_FLAG(RCC_FLAG_LOCKUPRST)){ resetCause |= RESETCAUSE_LOCKUP;   }
+		__HAL_RCC_CLEAR_RESET_FLAGS();
+		Scheduler_RecordBootResetCause(resetCause);
+	}
 
 	//MCU Configuration--------------------------------------------------------
 	if( BOARD_Init() != INIT_OK){
